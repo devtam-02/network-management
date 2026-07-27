@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netmgr"
+version = "0.1.0"
+description = "Quản lý mạng & proxy cho Ubuntu — chạy dưới dạng tray icon"
+requires-python = ">=3.12"
+# Phụ thuộc runtime là các gói hệ thống, KHÔNG cài qua pip:
+#   python3-gi, gir1.2-nm-1.0, gir1.2-secret-1, gir1.2-gtk-4.0, gir1.2-adw-1
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+netmgr = "netmgr.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Chạy test thẳng từ source, không cần `pip install -e .` — quan trọng vì môi
+# trường Ubuntu là externally-managed, tránh phải dựng venv chỉ để chạy test.
+pythonpath = ["src"]
+markers = [
+    "needs_nm: cần NetworkManager thật, không chạy trong CI",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
