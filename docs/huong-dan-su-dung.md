@@ -234,14 +234,23 @@ cùng tồn tại rồi tranh nhau theo metric, thứ bạn đặt chưa chắc 
 Automatic, chứ không phải bỏ qua. Nhờ vậy mỗi Bộ cấu hình quyết định trọn vẹn
 bảng route của các mạng nó bật, không phụ thuộc Bộ cấu hình chạy trước đó.
 
-**Kiểm tra ở đâu?** Trang **Định tuyến** trong app, dòng ngay dưới tên mỗi
-thiết bị: *"Đang chạy: Automatic BẬT/TẮT · N route đặt tay"*.
+**Kiểm tra ở đâu?** Hai chỗ đều được:
 
-> **Đừng kiểm tra bằng Cài đặt của Ubuntu.** Settings đọc cấu hình **trên đĩa**,
-> còn app cố ý không bao giờ ghi đĩa — nó chỉ đổi cấu hình **đang chạy**. Nên
-> Settings luôn hiện trạng thái gốc của máy, bất kể Bộ cấu hình đang làm gì. Đây
-> là hệ quả trực tiếp của nguyên tắc "không đụng vào cấu hình mạng của máy", chứ
-> không phải lỗi.
+- Trang **Định tuyến** trong app — dòng dưới tên mỗi thiết bị:
+  *"Đang chạy: Automatic BẬT/TẮT · N route đặt tay"*. Đây là trạng thái runtime.
+- **Cài đặt của Ubuntu**, hoặc
+  `nmcli -g ipv4.ignore-auto-routes connection show "<tên>"`. Đây là cấu hình đã
+  lưu trên đĩa.
+
+Chế độ Automatic là **thứ duy nhất** app ghi xuống đĩa. Lý do: chỉ đổi runtime
+thì Settings không thấy, và cấu hình mất mỗi lần thiết bị dựng lại. App nhớ giá
+trị gốc của máy trong `~/.config/netmgr/profiles.toml` và trả lại khi bạn bỏ Bộ
+cấu hình hoặc thoát app.
+
+> Route tĩnh thì vẫn **chỉ sống ở runtime**, không ghi đĩa. Ghi xuống đĩa khiến
+> NetworkManager viết lại `/etc/netplan/90-NM-<uuid>.yaml` — đường đã từng làm
+> mất `connection.interface-name`. App kiểm trường đó sau mỗi lần ghi và báo lỗi
+> nếu nó thay đổi.
 
 > ⚠ Tắt Automatic bỏ **tất cả** route do DHCP cấp, kể cả default route. Nếu bạn
 > đặt route riêng cho đúng cái mạng đang là đường ra Internet, app hiện cảnh báo

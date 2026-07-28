@@ -300,7 +300,8 @@ def test_clear_active_khong_ngat_mang(world):
     network.calls.clear()
 
     service.clear_active()
-    assert network.operations() == ["restore"]
+    # khôi phục route runtime + trả chế độ Automatic về gốc, KHÔNG activate/deactivate
+    assert set(network.operations()) == {"restore", "store_mode"}
 
 
 # ── mô tả ────────────────────────────────────────────────────────────────────
@@ -393,7 +394,7 @@ def _routed_profile():
 def test_reassert_ap_lai_route_va_automatic(world):
     """Mở lại app hoặc cắm lại cáp thì route runtime đã mất — phải áp lại, nếu
     không app ghi "đang dùng X" mà runtime đã về nguyên gốc."""
-    service, network, _proxy, _lan, _ = world
+    service, network, _proxy, lan, _ = world
     profile = _routed_profile()
     service.save(profile)
     service.apply(profile.id, on_done=lambda r: None)
@@ -401,6 +402,8 @@ def test_reassert_ap_lai_route_va_automatic(world):
 
     service.reassert_routes()
     assert ("routes", "enp3s0") in network.calls
+    # có route riêng -> Automatic phải TẮT cả ở cấu hình đã lưu
+    assert network.stored_modes[lan.uuid] is False
 
 
 def test_reassert_chi_cham_interface_duoc_chi_dinh(world):
@@ -423,7 +426,7 @@ def test_reassert_khong_ngat_hay_kich_hoat_ket_noi(world):
     network.calls.clear()
 
     service.reassert_routes()
-    assert set(network.operations()) == {"routes"}
+    assert set(network.operations()) == {"routes", "store_mode"}
 
 
 def test_reassert_khong_lam_gi_khi_khong_dung_bo_cau_hinh(world):
@@ -431,3 +434,45 @@ def test_reassert_khong_lam_gi_khi_khong_dung_bo_cau_hinh(world):
     network.calls.clear()
     service.reassert_routes()
     assert network.calls == []
+
+
+# ── ghi chế độ route xuống đĩa, và trả lại giá trị gốc ───────────────────────
+
+
+def test_ghi_che_do_route_xuong_cau_hinh_da_luu(world):
+    """Chỉ đổi runtime thì Cài đặt của Ubuntu không thấy, và mất mỗi lần thiết
+    bị dựng lại cấu hình."""
+    service, network, _proxy, lan, _ = world
+    profile = new_profile("X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE)])
+    service.save(profile)
+    service.apply(profile.id, on_done=lambda r: None)
+
+    # không route riêng -> Automatic BẬT
+    assert network.stored_modes[lan.uuid] is True
+
+
+def test_nho_gia_tri_goc_va_tra_lai_khi_bo_bo_cau_hinh(world):
+    service, network, _proxy, lan, _ = world
+    lan.ipv4.ignore_auto_routes = True          # máy đang tắt Automatic
+    profile = new_profile("X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE)])
+    service.save(profile)
+    service.apply(profile.id, on_done=lambda r: None)
+    assert network.stored_modes[lan.uuid] is True    # app bật lên
+
+    service.clear_active()
+    assert network.stored_modes[lan.uuid] is False   # trả lại đúng giá trị gốc
+
+
+def test_gia_tri_goc_chi_ghi_nhan_mot_lan(world):
+    """Ghi nhận lần hai sẽ lưu chính giá trị app vừa đặt, mất đường về."""
+    service, network, _proxy, lan, _ = world
+    lan.ipv4.ignore_auto_routes = True
+    profile = new_profile("X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE)])
+    service.save(profile)
+
+    service.apply(profile.id, on_done=lambda r: None)
+    lan.ipv4.ignore_auto_routes = False         # như thể đã ghi xuống đĩa
+    service.reassert_routes()
+
+    service.clear_active()
+    assert network.stored_modes[lan.uuid] is False   # vẫn về giá trị GỐC

@@ -102,6 +102,10 @@ class MainWindow(Adw.ApplicationWindow):
         if row is None:
             return
         self._current = row.page_key
+        # Trang chi tiết nằm ĐÈ LÊN vùng nội dung. Không đóng nó thì đổi mục ở
+        # sidebar chỉ đổi thứ nằm bên dưới, người dùng vẫn thấy y nguyên trang
+        # chi tiết và tưởng nút không hoạt động.
+        self._nav.pop_to_page(self._root_page)
         self.refresh()
 
     def toast(self, text: str) -> None:

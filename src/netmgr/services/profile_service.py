@@ -38,6 +38,8 @@ class ProfileService:
     def reload(self) -> None:
         self._profiles = self._store.load()
         self._active_id = self._store.load_active_id()
+        #: uuid connection -> `ipv4.ignore-auto-routes` gốc của máy, để trả lại.
+        self._original_route_modes = self._store.load_original_route_modes()
         if self._active_id and self.get(self._active_id) is None:
             self._active_id = None
         self._refresh_broken_flags()
@@ -192,6 +194,10 @@ class ProfileService:
             if report.ok:
                 self._active_id = profile.id
                 self._persist()
+                # Bước áp route của applier chỉ đổi runtime. Ghi thêm chế độ
+                # Automatic xuống cấu hình đã lưu để nó không mất khi thiết bị
+                # dựng lại, và để Cài đặt của Ubuntu hiện đúng.
+                self.persist_route_modes(profile)
             on_done(report)
 
         self._applier.apply(profile, on_done=finished, on_progress=on_progress)
@@ -210,6 +216,7 @@ class ProfileService:
         interfaces = self._touched_interfaces(previous)
         for iface in interfaces:
             self._network.restore_runtime(iface, lambda _r: None)
+        self._restore_route_modes()
 
         if interfaces:
             return OpResult.success(
@@ -236,7 +243,41 @@ class ProfileService:
         if profile is None:
             return
 
+        snapshot, targets = self._routing_targets(profile, interfaces)
+        for device, binding in targets:
+            log.info(
+                "Áp lại route của '%s' cho %s (Automatic %s)",
+                profile.name, device.interface,
+                "bật" if binding.automatic_routes else "tắt",
+            )
+            self._persist_route_mode(device, snapshot, binding.automatic_routes)
+            self._network.apply_runtime_routes(
+                device.interface,
+                list(binding.routes),
+                not binding.automatic_routes,
+                self._log_reassert,
+            )
+
+    def persist_route_modes(self, profile: Profile | None = None) -> None:
+        """Chỉ ghi chế độ Automatic xuống đĩa, không đụng route runtime.
+
+        Dùng sau khi applier đã áp route: applier chỉ đổi runtime.
+        """
+        profile = profile or self.active
+        if profile is None:
+            return
+        snapshot, targets = self._routing_targets(profile)
+        for device, binding in targets:
+            self._persist_route_mode(device, snapshot, binding.automatic_routes)
+
+    def _routing_targets(self, profile: Profile, interfaces: list[str] | None = None):
+        """(snapshot, [(device, binding)]) — thiết bị đang kết nối mà Bộ cấu hình
+        này quyết định bảng route cho.
+
+        Một chỗ duy nhất, dùng bởi cả `reassert_routes` và `persist_route_modes`.
+        """
         snapshot = self._network.snapshot()
+        out: list[tuple[object, Binding]] = []
         for binding in profile.routing_bindings:
             for device in snapshot.devices:
                 if not binding.matches(device):
@@ -245,17 +286,45 @@ class ProfileService:
                     continue
                 if interfaces is not None and device.interface not in interfaces:
                     continue
-                log.info(
-                    "Áp lại route của '%s' cho %s (Automatic %s)",
-                    profile.name, device.interface,
-                    "bật" if binding.automatic_routes else "tắt",
-                )
-                self._network.apply_runtime_routes(
-                    device.interface,
-                    list(binding.routes),
-                    not binding.automatic_routes,
-                    self._log_reassert,
-                )
+                out.append((device, binding))
+        return snapshot, out
+
+    def _persist_route_mode(self, device, snapshot, automatic: bool) -> None:
+        """Ghi chế độ Automatic xuống cấu hình đã lưu, nhớ giá trị gốc trước.
+
+        Chỉ ghi thuộc tính này, không ghi route — route vẫn thuộc về Bộ cấu hình
+        và chỉ sống ở runtime.
+        """
+        uuid = device.active_connection_uuid
+        if not uuid:
+            return
+        conn = snapshot.connection_by_uuid(uuid)
+        if conn is None:
+            return
+
+        # Ghi nhận giá trị gốc ĐÚNG MỘT LẦN. Ghi lại lần hai sẽ lưu chính giá trị
+        # app vừa đặt, và người dùng mất đường về cấu hình ban đầu.
+        if uuid not in self._original_route_modes:
+            self._original_route_modes[uuid] = conn.ipv4.ignore_auto_routes
+            self._persist()
+
+        self._network.set_stored_automatic_routes(
+            uuid, automatic, self._log_persist
+        )
+
+    def _restore_route_modes(self) -> None:
+        """Trả `ipv4.ignore-auto-routes` của mọi connection về giá trị gốc."""
+        for uuid, ignore_auto in list(self._original_route_modes.items()):
+            self._network.set_stored_automatic_routes(
+                uuid, not ignore_auto, self._log_persist
+            )
+        self._original_route_modes.clear()
+        self._persist()
+
+    @staticmethod
+    def _log_persist(result) -> None:
+        if not result.ok:
+            log.warning("Không lưu được chế độ route: %s", result.message)
 
     @staticmethod
     def _log_reassert(result) -> None:
@@ -266,6 +335,7 @@ class ProfileService:
         """Trả mọi thiết bị về cấu hình gốc — gọi khi thoát app."""
         for iface in self._touched_interfaces(self.active):
             self._network.restore_runtime(iface, lambda _r: None)
+        self._restore_route_modes()
 
     def _touched_interfaces(self, profile: Profile | None) -> list[str]:
         """Interface mà Bộ cấu hình này có đặt lại bảng route.
@@ -345,4 +415,6 @@ class ProfileService:
         ]
 
     def _persist(self) -> None:
-        self._store.save(self._profiles, self._active_id)
+        self._store.save(
+            self._profiles, self._active_id, self._original_route_modes
+        )

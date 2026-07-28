@@ -21,6 +21,8 @@ class FakeNetwork:
         self.runtime_routes: dict[str, list] = {}
         self.last_activate_interface: str | None = None
         self.last_ignore_auto: bool | None = None
+        #: uuid -> Automatic đã ghi xuống cấu hình đã lưu.
+        self.stored_modes: dict[str, bool] = {}
 
     def snapshot(self):
         return self._snapshot
@@ -55,9 +57,19 @@ class FakeNetwork:
         device = self._snapshot.device_by_interface(
             interface or (conn.interface_name if conn else "") or ""
         )
+        # uuid=None nghĩa là "bật thiết bị này lên", NetworkManager tự chọn cấu
+        # hình phù hợp. Bản giả phải làm y vậy, nếu không thiết bị sẽ ở trạng
+        # thái CONNECTED mà không có connection nào — điều không xảy ra thật.
+        if conn is None and device is not None:
+            conn = next(
+                (c for c in self._snapshot.connections
+                 if c.type is device.type
+                 and c.interface_name in (None, "", device.interface)),
+                None,
+            )
         if device is not None:
             self._detach(device)
-            device.active_connection_uuid = uuid
+            device.active_connection_uuid = conn.uuid if conn else uuid
             device.state = (
                 DeviceState.CONNECTING if self.activation_hangs else DeviceState.CONNECTED
             )
@@ -92,6 +104,12 @@ class FakeNetwork:
             return
         self.runtime_routes[interface] = list(routes)
         callback(OpResult.success())
+
+    def set_stored_automatic_routes(self, uuid: str, automatic: bool, callback=None) -> None:
+        self.calls.append(("store_mode", uuid))
+        self.stored_modes[uuid] = automatic
+        if callback is not None:
+            callback(OpResult.success())
 
     def restore_runtime(self, interface: str, callback) -> None:
         self.calls.append(("restore", interface))

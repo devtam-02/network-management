@@ -133,10 +133,28 @@ class ProfileStore:
     def load_active_id(self) -> str | None:
         return self._raw().get("active_id") or None
 
-    def save(self, profiles: list[Profile], active_id: str | None = None) -> bool:
+    def load_original_route_modes(self) -> dict[str, bool]:
+        """Giá trị `ipv4.ignore-auto-routes` GỐC của máy, theo uuid connection.
+
+        Phải nằm trên đĩa: app ghi giá trị này xuống cấu hình của NetworkManager,
+        nên nếu chỉ giữ trong bộ nhớ thì app bị kill hoặc máy mất điện là mất
+        luôn đường về — cấu hình của người dùng sẽ ở lại trạng thái app đặt.
+        """
+        raw = self._raw().get("original_route_mode", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {k: bool(v) for k, v in raw.items() if isinstance(v, bool)}
+
+    def save(
+        self,
+        profiles: list[Profile],
+        active_id: str | None = None,
+        original_route_modes: dict[str, bool] | None = None,
+    ) -> bool:
         payload = {
             "schema_version": SCHEMA_VERSION,
             "active_id": active_id or "",
+            "original_route_mode": dict(original_route_modes or {}),
             "profile": [profile_to_dict(p) for p in profiles],
         }
         try:

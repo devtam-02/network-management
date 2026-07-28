@@ -616,6 +616,63 @@ class NMFacade:
 
         self._reapply_with(interface, mutate, callback, f"Áp route cho {interface}")
 
+    def set_stored_automatic_routes(
+        self, uuid: str, automatic: bool, callback: OpCallback | None = None
+    ) -> None:
+        """Ghi chế độ Automatic của route xuống cấu hình ĐÃ LƯU (tức xuống đĩa).
+
+        Đây là ngoại lệ duy nhất của nguyên tắc "không ghi đĩa", và có lý do:
+        chỉ đổi runtime thì Cài đặt của Ubuntu không thấy, và cấu hình mất mỗi
+        lần thiết bị dựng lại. Chỉ ghi ĐÚNG MỘT thuộc tính; route tĩnh vẫn chỉ
+        sống ở runtime.
+
+        Trên Ubuntu, ghi xuống đĩa khiến NetworkManager viết lại
+        /etc/netplan/90-NM-<uuid>.yaml — chính đường đã từng làm mất
+        `connection.interface-name` và hỏng cấu hình mạng của người dùng. Nên
+        sau khi ghi, hàm này kiểm lại trường đó và báo lỗi nếu nó thay đổi.
+        """
+        connection = self._client.get_connection_by_uuid(uuid) if self._client else None
+        if connection is None:
+            self._report(callback, OpResult(False, f"Không tìm thấy cấu hình {uuid}"))
+            return
+
+        setting = connection.get_setting_ip4_config()
+        if setting is None:
+            self._report(callback, OpResult(False, "Cấu hình không có IPv4"))
+            return
+        if setting.get_ignore_auto_routes() == (not automatic):
+            self._report(callback, OpResult.success())     # đã đúng, đừng ghi đĩa
+            return
+
+        setting.set_property("ignore-auto-routes", not automatic)
+        before = connection.get_setting_connection().get_interface_name()
+        connection.commit_changes_async(
+            True, None, self._on_stored_committed,
+            (connection, uuid, before, callback),
+        )
+
+    def _on_stored_committed(self, connection, result, user_data) -> None:
+        _conn, uuid, before, callback = user_data
+        try:
+            connection.commit_changes_finish(result)
+        except Exception as exc:  # noqa: BLE001
+            self._report(callback, OpResult.failure(exc, "Lưu chế độ route"))
+            return
+
+        after = connection.get_setting_connection().get_interface_name()
+        if before and after != before:
+            # Đúng dấu hiệu của sự cố netplan cũ. Báo to chứ không im lặng.
+            log.error(
+                "GHI ĐĨA LÀM MẤT interface-name của %s: %r -> %r", uuid, before, after
+            )
+            self._report(callback, OpResult(
+                False,
+                f"Lưu xong nhưng NetworkManager làm mất interface-name "
+                f"({before!r} -> {after!r}) — hãy kiểm tra /etc/netplan",
+            ))
+            return
+        self._report(callback, OpResult.success())
+
     def read_runtime_ipv4(self, interface: str, callback) -> None:
         """Đọc cấu hình IPv4 ĐANG CHẠY trên thiết bị; `None` nếu không đọc được.
 
