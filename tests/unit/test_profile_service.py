@@ -276,7 +276,10 @@ def test_apply_unknown_profile(world):
     assert result["r"].ok is False or result["r"].profile_name == ""
 
 
-def test_clear_active_does_not_touch_network(world):
+def test_clear_active_khoi_phuc_ca_thiet_bi_ve_automatic(world):
+    """Áp dụng đã đưa enp3s0 về Automatic, tức runtime đã đổi — bỏ Bộ cấu hình
+    phải khôi phục nó. Trước đây chỉ khôi phục thiết bị CÓ route riêng nên máy
+    không về được cấu hình gốc."""
     service, network, _proxy, lan, _ = world
     profile = new_profile("X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid)])
     service.save(profile)
@@ -285,7 +288,19 @@ def test_clear_active_does_not_touch_network(world):
 
     service.clear_active()
     assert service.active is None
-    assert network.operations() == []
+    assert ("restore", "enp3s0") in network.calls
+
+
+def test_clear_active_khong_ngat_mang(world):
+    """Người dùng nói "thôi không dùng bối cảnh nữa", không nói "ngắt mạng"."""
+    service, network, _proxy, lan, _ = world
+    profile = new_profile("X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid)])
+    service.save(profile)
+    service.apply(profile.id, on_done=lambda r: None)
+    network.calls.clear()
+
+    service.clear_active()
+    assert network.operations() == ["restore"]
 
 
 # ── mô tả ────────────────────────────────────────────────────────────────────

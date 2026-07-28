@@ -18,7 +18,7 @@ from netmgr.domain.models import (
 )
 from netmgr.infra.proxy_store import new_config
 from netmgr.ui.view_models import (
-    ignore_auto_hint,
+    lost_default_route_warning,
     connection_detail,
     connection_rows,
     empty_wifi_hint,
@@ -436,27 +436,42 @@ def test_device_status_when_idle():
     assert device_status(dev, snapshot(devices=[dev])) == "Chưa kết nối"
 
 
-# ── cảnh báo khi bỏ route tự động ────────────────────────────────────────────
+# ── cảnh báo mất đường ra Internet ───────────────────────────────────────────
 
 
-def test_ignore_auto_hint_canh_bao_khi_la_duong_ra_internet():
+def _snap_default_via(iface: str):
     from netmgr.domain.models import Ipv4Route, SystemRoute
 
-    snap = snapshot(system_routes=[
-        SystemRoute("enx1234",
-                    Ipv4Route("0.0.0.0", 0, next_hop="172.20.10.1", metric=100)),
+    return snapshot(system_routes=[
+        SystemRoute(iface, Ipv4Route("0.0.0.0", 0, next_hop="172.20.10.1", metric=100)),
     ])
-    hint = ignore_auto_hint("enx1234", snap)
-    assert "đường ra Internet" in hint
 
 
-def test_ignore_auto_hint_binh_thuong_khi_khong_giu_default_route():
-    from netmgr.domain.models import Ipv4Route, SystemRoute
+def _route(dest="10.0.0.0", prefix=8):
+    from netmgr.domain.models import Ipv4Route
 
-    snap = snapshot(system_routes=[
-        SystemRoute("enx1234",
-                    Ipv4Route("0.0.0.0", 0, next_hop="172.20.10.1", metric=100)),
-    ])
-    hint = ignore_auto_hint("enp1s0", snap)
-    assert "đường ra Internet" not in hint
-    assert "DHCP" in hint
+    return Ipv4Route(dest, prefix, next_hop="10.207.154.254")
+
+
+def test_canh_bao_khi_route_rieng_lam_mat_default_route():
+    snap = _snap_default_via("enx1234")
+    assert "đường ra Internet" in lost_default_route_warning(
+        "enx1234", [_route()], snap
+    )
+
+
+def test_khong_canh_bao_tren_thiet_bi_khac():
+    snap = _snap_default_via("enx1234")
+    assert lost_default_route_warning("enp1s0", [_route()], snap) == ""
+
+
+def test_khong_canh_bao_khi_khong_co_route_rieng():
+    """Không route riêng thì vẫn Automatic, chẳng mất gì."""
+    snap = _snap_default_via("enx1234")
+    assert lost_default_route_warning("enx1234", [], snap) == ""
+
+
+def test_khong_canh_bao_khi_bo_cau_hinh_tu_khai_default_route():
+    snap = _snap_default_via("enx1234")
+    routes = [_route(), _route("0.0.0.0", 0)]
+    assert lost_default_route_warning("enx1234", routes, snap) == ""

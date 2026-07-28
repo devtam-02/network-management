@@ -37,8 +37,6 @@ def binding_to_dict(binding: Binding) -> dict:
     }
     if binding.connection_uuid:
         data["connection_uuid"] = binding.connection_uuid
-    if binding.routes and not binding.ignore_auto_routes:
-        data["ignore_auto_routes"] = False
     if binding.routes:
         # Lưu dạng một dòng cho dễ đọc và sửa tay:
         #   "10.0.0.0/8 via 10.207.154.254 metric 100"
@@ -65,7 +63,6 @@ def binding_from_dict(data: dict) -> Binding:
         connection_uuid=data.get("connection_uuid") or None,
         owned=bool(data.get("owned", False)),
         required=bool(data.get("required", False)),
-        ignore_auto_routes=bool(data.get("ignore_auto_routes", True)),
         routes=routes,
     )
 

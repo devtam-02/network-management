@@ -323,17 +323,20 @@ class ProfileApplier:
         App không bao giờ ghi vào cấu hình đã lưu của máy. Route sống trong Bộ
         cấu hình và được `reapply` lên thiết bị đang chạy, nên tắt Bộ cấu hình
         hoặc thoát app là máy trở về đúng cấu hình gốc.
+
+        Mọi thiết bị Bộ cấu hình bật lên đều được đặt lại, kể cả thiết bị KHÔNG
+        có route riêng — thiết bị đó về Automatic. Nếu chỉ chạm vào thiết bị có
+        route thì một thiết bị từng bị tắt Automatic sẽ giữ nguyên trạng thái
+        đó, và Bộ cấu hình không còn quyết định được bảng route của mình.
         """
         snapshot = self._network.snapshot()
-        targets: list[tuple[str, list]] = []
-        for binding in self._profile.bindings:
-            if not binding.routes:
-                continue
+        targets: list[tuple[str, list, bool]] = []
+        for binding in self._profile.routing_bindings:
             device = self._match_device(binding, snapshot)
             if device is None or device.state is not DeviceState.CONNECTED:
                 continue
             targets.append(
-                (device.interface, list(binding.routes), binding.ignore_auto_routes)
+                (device.interface, list(binding.routes), not binding.automatic_routes)
             )
 
         if not targets:
@@ -346,7 +349,14 @@ class ProfileApplier:
 
         def step_one() -> None:
             if not remaining:
-                done(True, f"Đã áp route cho {len(targets)} thiết bị")
+                manual = sum(1 for _i, routes, _f in targets if routes)
+                auto = len(targets) - manual
+                bits = []
+                if manual:
+                    bits.append(f"{manual} thiết bị dùng route riêng")
+                if auto:
+                    bits.append(f"{auto} thiết bị về Automatic")
+                done(True, ", ".join(bits))
                 return
             iface, routes, ignore_auto = remaining.pop(0)
             self._network.apply_runtime_routes(iface, routes, ignore_auto, on_result)

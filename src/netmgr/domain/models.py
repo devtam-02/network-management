@@ -435,21 +435,26 @@ class Binding:
     connection_uuid: str | None = None
     owned: bool = False                     # app sở hữu → xoá cùng Bộ cấu hình
     required: bool = False                  # True → thiếu thiết bị là lỗi
-    #: Bỏ qua route do DHCP đẩy về cho thiết bị này.
-    #:
-    #: Mặc định BẬT khi có route riêng: nếu không, route của DHCP và route của
-    #: Bộ cấu hình cùng tồn tại và tranh nhau theo metric — thứ người dùng đặt
-    #: tay chưa chắc thắng.
-    #:
-    #: Cảnh báo: cờ này cũng bỏ luôn default route do DHCP cấp. Với thiết bị
-    #: đang là đường ra Internet thì phải tắt, nếu không sẽ mất mạng.
-    ignore_auto_routes: bool = True
     #: Route tĩnh riêng của Bộ cấu hình cho interface này.
     #:
     #: Route thuộc về Bộ cấu hình chứ KHÔNG thuộc connection của hệ thống: mỗi
     #: bối cảnh có bộ route riêng, và chúng chỉ được áp ở runtime nên tắt Bộ
     #: cấu hình là máy trở về đúng cấu hình gốc.
     routes: list[Ipv4Route] = field(default_factory=list)
+
+    @property
+    def automatic_routes(self) -> bool:
+        """Có để route ở chế độ Automatic như trong Cài đặt của Ubuntu không.
+
+        Suy ra, không phải lựa chọn riêng: có route riêng nghĩa là người dùng
+        muốn tự quyết, nên tắt Automatic đi. Không có route riêng thì bật lại,
+        để DHCP làm việc của nó.
+
+        Hai chế độ này loại trừ nhau — để cả hai cùng bật thì route của DHCP và
+        route đặt tay cùng tồn tại và tranh nhau theo metric, thứ người dùng đặt
+        chưa chắc thắng.
+        """
+        return not self.routes
 
     def matches(self, device: DeviceInfo) -> bool:
         if self.device_match == "any-ethernet":
@@ -628,6 +633,23 @@ class Profile:
 
     def binding_for(self, interface: str) -> Binding | None:
         return next((b for b in self.bindings if b.device_match == interface), None)
+
+    @property
+    def routing_bindings(self) -> list[Binding]:
+        """Binding mà app sẽ đặt lại bảng route cho khi áp dụng Bộ cấu hình.
+
+        Định nghĩa ở một chỗ duy nhất, vì cả lúc áp dụng lẫn lúc khôi phục đều
+        cần đúng danh sách này. Hai bên tự tính riêng thì sẽ lệch, và lệch nghĩa
+        là khôi phục sót — máy không về được cấu hình gốc.
+
+        Gồm cả binding KHÔNG có route: thiết bị đó được đưa về Automatic, tức
+        runtime của nó vẫn bị thay đổi và vẫn phải khôi phục.
+        """
+        return [
+            b for b in self.bindings
+            if b.action is BindingAction.ACTIVATE
+            or (b.action is BindingAction.LEAVE_ALONE and b.routes)
+        ]
 
 
 class StepStatus(str, Enum):

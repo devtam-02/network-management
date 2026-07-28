@@ -370,18 +370,26 @@ def empty_wifi_hint(snapshot: NetworkSnapshot) -> str | None:
     )
 
 
-def ignore_auto_hint(interface: str, snapshot) -> str:
-    """Giải thích hệ quả của việc bỏ route tự động trên một interface.
+def lost_default_route_warning(interface: str, routes, snapshot) -> str:
+    """Cảnh báo khi đặt route riêng sẽ làm mất đường ra Internet. "" = an toàn.
 
-    Cờ `ignore-auto-routes` bỏ TẤT CẢ route do DHCP đẩy về, kể cả default route.
-    Trên interface đang là đường ra Internet thì đó là mất mạng — phải nói trước.
+    Có route riêng thì Automatic bị tắt, tức mọi route do DHCP cấp đều bỏ — kể
+    cả default route. Với thiết bị đang là đường ra Internet mà Bộ cấu hình lại
+    không tự khai default route thì đó là mất mạng, phải nói trước chứ không để
+    người dùng tự phát hiện.
     """
     from ..domain.routing import default_route_owner
 
+    if not routes:
+        return ""       # không route riêng → vẫn Automatic → không mất gì
+    if any(r.is_default and r.enabled for r in routes):
+        return ""       # Bộ cấu hình tự lo default route
+
     owner = default_route_owner(snapshot.system_routes)
-    if owner is not None and owner.interface == interface:
-        return (
-            "⚠ Thiết bị này đang là đường ra Internet. Bỏ route tự động sẽ bỏ "
-            "cả default route của nó — hãy tự thêm route mặc định, hoặc tắt mục này."
-        )
-    return "Bỏ route do DHCP đẩy về, để chỉ route bên trên có hiệu lực."
+    if owner is None or owner.interface != interface:
+        return ""
+    return (
+        "⚠ Thiết bị này đang là đường ra Internet. Có route riêng nghĩa là "
+        "Automatic bị tắt, nên default route của DHCP sẽ mất. Hãy thêm một "
+        "route 0.0.0.0/0 cho nó, hoặc xoá các route riêng ở đây."
+    )

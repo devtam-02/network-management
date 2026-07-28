@@ -222,14 +222,17 @@ class ProfileService:
             self._network.restore_runtime(iface, lambda _r: None)
 
     def _touched_interfaces(self, profile: Profile | None) -> list[str]:
-        """Interface mà Bộ cấu hình này có đụng route vào."""
+        """Interface mà Bộ cấu hình này có đặt lại bảng route.
+
+        Dùng chung `Profile.routing_bindings` với lúc áp dụng. Trước đây hàm này
+        tự lọc theo `binding.routes` nên bỏ sót thiết bị được đưa về Automatic:
+        áp dụng thì đổi runtime, mà "Không dùng Bộ cấu hình" lại không khôi phục.
+        """
         if profile is None:
             return []
         snapshot = self._network.snapshot()
         out: list[str] = []
-        for binding in profile.bindings:
-            if not binding.routes:
-                continue
+        for binding in profile.routing_bindings:
             for device in snapshot.devices:
                 if binding.matches(device) and device.interface not in out:
                     out.append(device.interface)

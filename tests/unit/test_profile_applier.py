@@ -515,14 +515,40 @@ def test_routes_applied_after_connection_is_up(world):
     assert ops.index("activate") < ops.index("routes")
 
 
-def test_no_routes_means_step_skipped(world):
+def test_khong_co_route_rieng_thi_dua_ve_automatic(world):
+    """Không route riêng nghĩa là "để DHCP lo", nên phải BẬT lại Automatic.
+
+    Bỏ qua bước này thì thiết bị từng bị tắt Automatic sẽ giữ nguyên trạng thái
+    đó, và Bộ cấu hình không còn quyết định được bảng route của mình.
+    """
     network, proxy, lan, _ = world
     profile = new_profile(
         "X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid)]
     )
     report, _ = run(make_applier(network, proxy), profile)
+    assert report.step("routes").status is StepStatus.OK
+    assert ("routes", "enp3s0") in network.calls
+    assert network.last_ignore_auto is False
+
+
+def test_thiet_bi_bi_ngat_thi_khong_dung_den_route(world):
+    network, proxy, _lan, _ = world
+    profile = new_profile(
+        "X", bindings=[Binding("enp3s0", BindingAction.DISCONNECT)]
+    )
+    report, _ = run(make_applier(network, proxy), profile)
     assert report.step("routes").status is StepStatus.SKIPPED
     assert "routes" not in network.operations()
+
+
+def test_leave_alone_khong_route_thi_khong_dung_den(world):
+    """"Không đụng tới" phải đúng nghĩa không đụng tới."""
+    network, proxy, _lan, _ = world
+    profile = new_profile(
+        "X", bindings=[Binding("enp3s0", BindingAction.LEAVE_ALONE)]
+    )
+    report, _ = run(make_applier(network, proxy), profile)
+    assert report.step("routes").status is StepStatus.SKIPPED
 
 
 def test_route_failure_rolls_back(world):
@@ -634,42 +660,35 @@ def test_rollback_restores_connection_to_its_original_device(world):
     assert network.last_activate_interface == "wlp2s0"
 
 
-# ── bỏ route tự động khi Bộ cấu hình có route riêng ──────────────────────────
+# ── Automatic bật/tắt theo việc có route riêng hay không ─────────────────────
 
 
-def _routed_profile(lan_uuid, ignore_auto: bool = True):
+def test_co_route_rieng_thi_tat_automatic(world):
+    """DHCP của công ty đẩy sẵn 10.0.0.0/8 — route đặt tay phải thắng, nên tắt
+    Automatic đi thay vì để hai bên tranh nhau theo metric."""
     from netmgr.domain.models import Ipv4Route
 
-    return new_profile(
+    network, proxy, lan, _wifi = world
+    profile = new_profile(
         "Có route",
         bindings=[
-            Binding(
-                "enp3s0",
-                BindingAction.ACTIVATE,
-                lan_uuid,
-                ignore_auto_routes=ignore_auto,
-                routes=[Ipv4Route("10.0.0.0", 8, next_hop="10.207.154.254")],
-            )
+            Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid,
+                    routes=[Ipv4Route("10.0.0.0", 8, next_hop="10.207.154.254")]),
         ],
     )
-
-
-def test_bo_route_tu_dong_theo_mac_dinh(world):
-    """Route DHCP đẩy về tranh với route của Bộ cấu hình, nên mặc định phải bỏ."""
-    network, proxy, lan, _wifi = world
-    report, _ = run(make_applier(network, proxy), _routed_profile(lan.uuid))
+    report, _ = run(make_applier(network, proxy), profile)
 
     assert report.ok, report.failure
     assert ("routes", "enp3s0") in network.calls
     assert network.last_ignore_auto is True
 
 
-def test_ton_trong_khi_nguoi_dung_tat_bo_route_tu_dong(world):
-    """Tắt được, vì cờ này bỏ luôn default route của DHCP."""
-    network, proxy, lan, _wifi = world
-    report, _ = run(
-        make_applier(network, proxy), _routed_profile(lan.uuid, ignore_auto=False)
-    )
+def test_automatic_la_suy_ra_khong_phai_lua_chon():
+    """Không có cách nào bật Automatic mà vẫn giữ route riêng — hai chế độ này
+    loại trừ nhau."""
+    from netmgr.domain.models import Ipv4Route
 
-    assert report.ok, report.failure
-    assert network.last_ignore_auto is False
+    assert Binding("enp3s0").automatic_routes is True
+    assert Binding(
+        "enp3s0", routes=[Ipv4Route("10.0.0.0", 8)]
+    ).automatic_routes is False

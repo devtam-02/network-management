@@ -208,13 +208,25 @@ của riêng nó. Chọn route đi qua thiết bị nào, và các route này **
 trong lúc Bộ cấu hình đang bật** — tắt app hoặc chọn *Không dùng Bộ cấu hình* là
 máy trở về đúng cấu hình gốc.
 
-Thiết bị nào có route riêng sẽ hiện thêm công tắc **Bỏ route tự động**, mặc định
-BẬT. Lý do: DHCP thường đẩy về sẵn một số route, chúng tranh với route bạn đặt
-tay theo metric — thứ bạn đặt chưa chắc thắng.
+**Automatic bật/tắt theo route, không phải một lựa chọn riêng.** Giống nút
+*Automatic* ở phần Routes trong Cài đặt của Ubuntu:
 
-> ⚠ Công tắc này bỏ **tất cả** route do DHCP cấp, kể cả default route. Nếu thiết
-> bị đó đang là đường ra Internet thì app sẽ cảnh báo ngay dưới công tắc — khi ấy
-> hoặc tự thêm route mặc định vào Bộ cấu hình, hoặc tắt công tắc đi.
+| Mạng trong Bộ cấu hình | Khi áp dụng |
+|---|---|
+| Có route riêng | Automatic **tắt** — chỉ route bạn khai có hiệu lực |
+| Không có route riêng | Automatic **bật** — để DHCP lo |
+
+Hai chế độ loại trừ nhau: để cả hai cùng bật thì route của DHCP và route đặt tay
+cùng tồn tại rồi tranh nhau theo metric, thứ bạn đặt chưa chắc thắng.
+
+Điều đáng chú ý là cột thứ hai: mạng **không** có route riêng vẫn được đặt lại về
+Automatic, chứ không phải bỏ qua. Nhờ vậy mỗi Bộ cấu hình quyết định trọn vẹn
+bảng route của các mạng nó bật, không phụ thuộc Bộ cấu hình chạy trước đó.
+
+> ⚠ Tắt Automatic bỏ **tất cả** route do DHCP cấp, kể cả default route. Nếu bạn
+> đặt route riêng cho đúng cái mạng đang là đường ra Internet, app hiện cảnh báo
+> ngay dưới danh sách route — khi ấy hãy thêm một route `0.0.0.0/0` vào Bộ cấu
+> hình, hoặc bỏ các route riêng ở đó đi.
 
 **Không dùng Bộ cấu hình** đưa app về quản lý thủ công — chọn mục này chỉ bỏ
 đánh dấu, không thay đổi cấu hình mạng đang chạy.
