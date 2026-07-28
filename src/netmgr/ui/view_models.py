@@ -17,6 +17,7 @@ from ..domain.models import (
     Ipv4Method,
     NetworkSnapshot,
     RouteSource,
+    StepStatus,
 )
 
 _STATE_TEXT = {
@@ -407,3 +408,41 @@ def runtime_routes_summary(runtime) -> str:
     if runtime.routes:
         return f"Đang chạy: {mode} · {len(runtime.routes)} route đặt tay"
     return f"Đang chạy: {mode} · không có route đặt tay"
+
+
+#: Dấu trạng thái từng bước khi áp dụng Bộ cấu hình.
+STEP_MARKS = {
+    StepStatus.PENDING: "○",
+    StepStatus.RUNNING: "◐",
+    StepStatus.OK: "✓",
+    StepStatus.FAILED: "✕",
+    StepStatus.SKIPPED: "–",
+    StepStatus.ROLLED_BACK: "↩",
+}
+
+
+def apply_progress_title(report) -> str:
+    """Tiêu đề bảng tiến trình — phải nói rõ đang chạy, xong, hay đã dừng."""
+    if any(s.status is StepStatus.RUNNING for s in report.steps):
+        return "Đang áp dụng…"
+    if report.rolled_back:
+        return "Đã dừng và khôi phục"
+    if report.failed_steps:
+        return "Thất bại"
+    return "Đã áp dụng xong"
+
+
+#: Lớp CSS theo trạng thái — bước lỗi phải nổi lên, bước chưa chạy phải mờ đi.
+STEP_CSS = {
+    StepStatus.FAILED: ["error"],
+    StepStatus.ROLLED_BACK: ["warning"],
+    StepStatus.PENDING: ["dim-label"],
+    StepStatus.SKIPPED: ["dim-label"],
+}
+
+
+def apply_progress_rows(report) -> list[tuple[object, str, list[str]]]:
+    return [
+        (step, STEP_MARKS[step.status], STEP_CSS.get(step.status, []))
+        for step in report.steps
+    ]

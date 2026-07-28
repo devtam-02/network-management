@@ -19,6 +19,8 @@ from netmgr.domain.models import (
 from netmgr.infra.proxy_store import new_config
 from netmgr.ui.view_models import (
     lost_default_route_warning,
+    apply_progress_rows,
+    apply_progress_title,
     runtime_routes_summary,
     connection_detail,
     connection_rows,
@@ -504,3 +506,48 @@ def test_runtime_summary_automatic_tat_va_dem_route():
 def test_runtime_summary_chua_doc_duoc():
     """Đọc bất đồng bộ nên lần vẽ đầu chưa có dữ liệu — không hiện gì cả."""
     assert runtime_routes_summary(None) == ""
+
+
+# ── bảng tiến trình áp dụng Bộ cấu hình ──────────────────────────────────────
+
+
+def _report(**status):
+    from netmgr.domain.models import ApplyStep, ProfileApplyReport, StepStatus
+
+    steps = [
+        ApplyStep("validate", "Kiểm tra", status.get("validate", StepStatus.OK)),
+        ApplyStep("activate", "Kích hoạt", status.get("activate", StepStatus.PENDING)),
+    ]
+    r = ProfileApplyReport("Công ty", steps)
+    r.rolled_back = status.get("rolled_back", False)
+    return r
+
+
+def test_tieu_de_khi_dang_chay():
+    from netmgr.domain.models import StepStatus
+
+    assert apply_progress_title(_report(activate=StepStatus.RUNNING)) == "Đang áp dụng…"
+
+
+def test_tieu_de_khi_xong():
+    from netmgr.domain.models import StepStatus
+
+    assert apply_progress_title(_report(activate=StepStatus.OK)) == "Đã áp dụng xong"
+
+
+def test_tieu_de_khi_da_dung_va_khoi_phuc():
+    """Phải nói rõ đã khôi phục, nếu không người dùng không biết mạng đang ra sao."""
+    from netmgr.domain.models import StepStatus
+
+    r = _report(activate=StepStatus.FAILED, rolled_back=True)
+    assert apply_progress_title(r) == "Đã dừng và khôi phục"
+
+
+def test_moi_buoc_co_dau_trang_thai():
+    from netmgr.domain.models import StepStatus
+
+    rows = apply_progress_rows(_report(activate=StepStatus.FAILED))
+    assert [mark for _s, mark, _c in rows] == ["✓", "✕"]
+    # bước lỗi phải nổi lên, không lẫn vào các bước thành công
+    assert rows[1][2] == ["error"]
+    assert rows[0][2] == []

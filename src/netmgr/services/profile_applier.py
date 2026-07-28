@@ -205,11 +205,8 @@ class ProfileApplier:
     def _step_radio_on(self, done) -> None:
         # Bật TRƯỚC khi kết nối: không có radio thì không kết nối Wi-Fi được.
         want = self._profile.wifi_enabled
-        if want is None and self._wants_wifi_device():
-            # Bật công tắc Wi-Fi trong Bộ cấu hình nghĩa là "bật Wi-Fi lên".
-            # Không suy ra điều này thì radio vẫn tắt và bước kích hoạt chắc
-            # chắn thất bại.
-            want = True
+        if want is None:
+            want = self._wifi_switch()
         if want is not True:
             done(True, skipped=True)
             return
@@ -218,15 +215,30 @@ class ProfileApplier:
             return
         self._network.set_wifi_enabled(True, lambda r: done(r.ok, r.message))
 
-    def _wants_wifi_device(self) -> bool:
+    def _wifi_switch(self) -> bool | None:
+        """Công tắc Wi-Fi trong Bộ cấu hình = BẬT/TẮT RADIO, không gì khác.
+
+        Với Wi-Fi, app cố tình không quan tâm có mạng nào đã lưu hay có kết nối
+        được không: chuyện đó phụ thuộc đang đứng ở đâu, không phải điều Bộ cấu
+        hình quyết định được. Cứ bật radio rồi để NetworkManager tự lo, đúng như
+        khi người dùng bấm công tắc Wi-Fi của GNOME.
+
+        `None` = Bộ cấu hình không có thiết bị Wi-Fi nào → không đụng tới radio.
+        """
         snapshot = self._network.snapshot()
         for binding in self._profile.bindings:
-            if binding.action is not BindingAction.ACTIVATE:
-                continue
             device = self._match_device(binding, snapshot)
-            if device is not None and device.type is ConnType.WIFI:
+            if device is None or device.type is not ConnType.WIFI:
+                continue
+            if binding.action is BindingAction.ACTIVATE:
                 return True
-        return False
+            if binding.action is BindingAction.DISCONNECT:
+                return False
+        return None
+
+    def _is_wifi(self, binding, snapshot) -> bool:
+        device = self._match_device(binding, snapshot)
+        return device is not None and device.type is ConnType.WIFI
 
     def _step_proxy(self, done) -> None:
         # Áp sớm: không phụ thuộc mạng và không gây mất kết nối, nên làm trước
@@ -266,13 +278,12 @@ class ProfileApplier:
         # "bật thiết bị này", connection để NetworkManager tự chọn.
         self._pending_interfaces: list[str] = []
         to_activate: list[tuple[str | None, str]] = []
-        #: Wi-Fi: chỉ cần radio bật là đủ. Còn kết nối được hay không phụ thuộc
-        #: mạng đã lưu có trong tầm phủ hay không — thứ Bộ cấu hình không kiểm
-        #: soát được. Bắt buộc nó thành công sẽ làm cả Bộ cấu hình thất bại với
-        #: lỗi "the device has no connections" chỉ vì đang ở nơi không có Wi-Fi
-        #: quen, dù mạng dây vẫn hoàn toàn ổn.
+        #: Wi-Fi có chỉ rõ mạng nào (do "Chụp trạng thái hiện tại" ghi lại) thì
+        #: vẫn thử kết nối, nhưng không bắt buộc thành công: mạng đó có thể không
+        #: trong tầm phủ, và đó không phải lỗi của người dùng.
         best_effort: list[tuple[str | None, str]] = []
         already_ok = 0
+        radio_only = 0
 
         for binding in self._profile.bindings:
             if binding.action is not BindingAction.ACTIVATE:
@@ -281,8 +292,15 @@ class ProfileApplier:
             if device is None:
                 continue        # đã kiểm ở bước validate: không bắt buộc
 
-            optional = device.type is ConnType.WIFI
-            if not optional:
+            wifi = device.type is ConnType.WIFI
+            if wifi and binding.connection_uuid is None:
+                # Công tắc Wi-Fi = bật radio, hết. Gọi activate thêm ở đây chỉ
+                # sinh ra lỗi "the device has no connections" khi không có mạng
+                # quen trong tầm phủ. Bước radio_on đã làm xong việc cần làm.
+                radio_only += 1
+                continue
+
+            if not wifi:
                 # Chỉ chờ ở bước verify những thiết bị BẮT BUỘC phải lên.
                 self._pending_interfaces.append(device.interface)
             already = (
@@ -300,28 +318,31 @@ class ProfileApplier:
                 continue
             # Kèm interface: Bộ cấu hình đã chỉ rõ thiết bị nào, không để NM
             # tự chọn rồi giữ nguyên connection ở chỗ cũ.
-            (best_effort if optional else to_activate).append(
+            (best_effort if wifi else to_activate).append(
                 (binding.connection_uuid, device.interface)
             )
 
-        def activate(pair, cb) -> None:
-            self._network.activate_connection(pair[0], pair[1], cb)
+        notes = []
+        if already_ok:
+            notes.append(f"{already_ok} kết nối đã đúng sẵn")
+        if radio_only:
+            notes.append(f"{radio_only} Wi-Fi chỉ bật radio")
 
-        def finish_required(ok: bool, detail: str = "", *, skipped: bool = False) -> None:
+        def then_wifi(ok: bool, detail: str = "", *, skipped: bool = False) -> None:
             if not ok:
                 done(ok, detail)
                 return
-            # Thử Wi-Fi sau cùng và bỏ qua mọi lỗi.
             remaining = list(best_effort)
             failed: list[str] = []
 
             def next_one() -> None:
                 if not remaining:
-                    bits = [detail] if detail else []
+                    bits = [b for b in ([detail] + notes) if b]
                     if best_effort:
-                        okc = len(best_effort) - len(failed)
-                        bits.append(f"Wi-Fi: {okc}/{len(best_effort)} kết nối được")
-                    done(True, " · ".join(bits), skipped=skipped and not best_effort)
+                        got = len(best_effort) - len(failed)
+                        bits.append(f"Wi-Fi: {got}/{len(best_effort)} kết nối được")
+                    done(True, " · ".join(bits),
+                         skipped=skipped and not best_effort and not notes)
                     return
                 pair = remaining.pop(0)
                 self._network.activate_connection(
@@ -331,23 +352,21 @@ class ProfileApplier:
             def on_result(pair, result) -> None:
                 if not result.ok:
                     failed.append(pair[1])
-                    log.info(
-                        "Wi-Fi %s không kết nối được (bỏ qua): %s",
-                        pair[1], result.message,
-                    )
+                    log.info("Wi-Fi %s không kết nối được (bỏ qua): %s",
+                             pair[1], result.message)
                 next_one()
 
             next_one()
 
         if not to_activate:
-            detail = f"{already_ok} kết nối đã đúng sẵn" if already_ok else ""
-            finish_required(True, detail, skipped=not already_ok)
+            then_wifi(True, skipped=True)
             return
 
-        suffix = f" ({already_ok} đã đúng sẵn)" if already_ok else ""
         self._chain(
-            to_activate, activate, finish_required,
-            f"Đã yêu cầu kích hoạt {len(to_activate)} kết nối{suffix}",
+            to_activate,
+            lambda pair, cb: self._network.activate_connection(pair[0], pair[1], cb),
+            then_wifi,
+            f"Đã yêu cầu kích hoạt {len(to_activate)} kết nối",
         )
 
     def _step_verify(self, done) -> None:
@@ -433,7 +452,10 @@ class ProfileApplier:
     def _step_radio_off(self, done) -> None:
         # Tắt CUỐI CÙNG: tắt sớm sẽ cắt mất kết nối Wi-Fi đang cần dùng ở các
         # bước trên.
-        if self._profile.wifi_enabled is not False:
+        want = self._profile.wifi_enabled
+        if want is None:
+            want = self._wifi_switch()
+        if want is not False:
             done(True, skipped=True)
             return
         if not self._network.snapshot().wifi_enabled:

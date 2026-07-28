@@ -174,7 +174,10 @@ Gom cấu hình mạng **và** proxy thành các bối cảnh, chuyển bằng m
 
 Sau đó ✏️ để sửa, ⧉ để nhân bản (tạo biến thể), 🗑 để xoá.
 
-**Khi áp dụng**, app chạy 9 bước theo thứ tự và hiện tiến trình từng bước:
+**Khi áp dụng**, app chạy 9 bước theo thứ tự và hiện tiến trình ở **khung bên
+phải cửa sổ**. Khung này xem được từ bất kỳ trang nào, và **ở lại sau khi chạy
+xong** để bạn thấy nó dừng ở bước nào — bước lỗi hiện màu đỏ kèm lý do. Bấm ✕
+ở góc để đóng.
 
 ```
 ✓  Kiểm tra Bộ cấu hình
@@ -194,11 +197,14 @@ Ba điều đáng biết:
 - **Thiết bị vắng mặt được bỏ qua** (laptop rời dock chẳng hạn), trừ khi bạn
   đánh dấu *Bắt buộc* cho thiết bị đó.
 
-**Wi-Fi chỉ cần bật là đủ.** Bật công tắc Wi-Fi trong Bộ cấu hình nghĩa là "bật
-radio lên", app không bắt buộc nó phải kết nối được. Chuyện đó phụ thuộc mạng đã
-lưu có trong tầm phủ hay không — thứ Bộ cấu hình không kiểm soát được. Bước kích
-hoạt sẽ báo `Wi-Fi: 0/1 kết nối được` và tiếp tục bình thường; NetworkManager tự
-kết nối khi thấy mạng quen.
+**Công tắc Wi-Fi = bật/tắt radio, không gì khác.** App không hề quan tâm có mạng
+nào đã lưu hay kết nối được không — nó chỉ bật radio rồi để NetworkManager tự lo,
+đúng như khi bạn bấm công tắc Wi-Fi của GNOME. Bước kích hoạt báo
+`1 Wi-Fi chỉ bật radio`.
+
+> Ngoại lệ: Bộ cấu hình tạo bằng **Chụp** có ghi lại đúng mạng Wi-Fi bạn đang
+> dùng, nên nó sẽ thử nối lại mạng đó. Không nối được cũng không sao — báo
+> `Wi-Fi: 0/1 kết nối được` rồi đi tiếp.
 
 Bộ cấu hình trỏ tới thứ đã bị xoá sẽ hiện ⚠ và không cho áp dụng.
 

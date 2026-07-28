@@ -41,7 +41,21 @@ class MainWindow(Adw.ApplicationWindow):
 
         self._toasts = Adw.ToastOverlay()
         self._split = Adw.NavigationSplitView()
-        self._toasts.set_child(self._split)
+
+        # Tiến trình áp dụng nằm ở KHUNG RIÊNG BÊN PHẢI, không lẫn vào nội dung:
+        # nó phải xem được từ bất kỳ trang nào, và phải ở lại sau khi chạy xong
+        # để thấy nó dừng ở bước nào.
+        self._progress_panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self._progress_split = Adw.OverlaySplitView(
+            content=self._split,
+            sidebar=self._progress_panel,
+            sidebar_position=Gtk.PackType.END,
+            collapsed=False,
+            show_sidebar=False,
+            min_sidebar_width=300,
+            max_sidebar_width=380,
+        )
+        self._toasts.set_child(self._progress_split)
         self.set_content(self._toasts)
 
         # Khởi tạo state TRƯỚC khi dựng sidebar: chọn hàng đầu tiên trong
@@ -421,8 +435,6 @@ class MainWindow(Adw.ApplicationWindow):
         service = self._controller.profiles
         page = Adw.PreferencesPage()
 
-        if self._apply_report is not None:
-            page.add(self._apply_progress_group(self._apply_report))
 
         group = Adw.PreferencesGroup(
             title="Bộ cấu hình",
@@ -515,30 +527,47 @@ class MainWindow(Adw.ApplicationWindow):
             row.add_suffix(button)
         return row
 
-    def _apply_progress_group(self, report) -> Adw.PreferencesGroup:
+    def _rebuild_progress_panel(self) -> None:
         """Tiến trình từng bước, không phải spinner vô định (§3.5.4)."""
-        from ..domain.models import StepStatus
+        child = self._progress_panel.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._progress_panel.remove(child)
+            child = nxt
 
-        marks = {
-            StepStatus.PENDING: "○",
-            StepStatus.RUNNING: "◐",
-            StepStatus.OK: "✓",
-            StepStatus.FAILED: "✕",
-            StepStatus.SKIPPED: "–",
-            StepStatus.ROLLED_BACK: "↩",
-        }
-        group = Adw.PreferencesGroup(title=f"Đang áp dụng '{report.profile_name}'")
-        for step in report.steps:
+        report = self._apply_report
+        self._progress_split.set_show_sidebar(report is not None)
+        if report is None:
+            return
+
+        header = Adw.HeaderBar(show_end_title_buttons=False, show_start_title_buttons=False)
+        header.set_title_widget(Adw.WindowTitle(
+            title=vm.apply_progress_title(report), subtitle=report.profile_name
+        ))
+        close = Gtk.Button(icon_name="window-close-symbolic", css_classes=["flat"],
+                           tooltip_text="Đóng bảng tiến trình")
+        close.connect("clicked", lambda _b: self.update_apply_progress(None))
+        header.pack_end(close)
+
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup()
+        for step, mark, css in vm.apply_progress_rows(report):
             row = Adw.ActionRow(
-                title=f"{marks[step.status]}  {step.label}", subtitle=step.detail
+                title=f"{mark}  {step.label}", subtitle=step.detail, css_classes=css
             )
+            row.set_subtitle_lines(4)
+            row.set_title_selectable(True)
             group.add(row)
-        return group
+        page.add(group)
+
+        toolbar = Adw.ToolbarView(content=page)
+        toolbar.add_top_bar(header)
+        toolbar.set_vexpand(True)
+        self._progress_panel.append(toolbar)
 
     def update_apply_progress(self, report) -> None:
         self._apply_report = report
-        if self._current == "profiles":
-            self.refresh()
+        self._rebuild_progress_panel()
 
     def prompt_capture_profile(self) -> None:
         dialog = Adw.AlertDialog(

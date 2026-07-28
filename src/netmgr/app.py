@@ -235,10 +235,13 @@ class NetmgrApp(Adw.Application):
             self._window.update_apply_progress(report)
 
     def _on_profile_applied(self, report) -> None:
-        self._apply_progress = None
+        # GIỮ báo cáo lại, không xoá. Xoá ngay khi xong thì không ai kịp thấy nó
+        # dừng ở bước nào — chính điều cần biết khi có sự cố. Người dùng tự đóng
+        # bảng tiến trình khi đã xem xong.
+        self._apply_progress = report
         self._toast(report.summary())
         if self._window is not None:
-            self._window.update_apply_progress(None)
+            self._window.update_apply_progress(report)
         self.refresh()
 
     def clear_profile(self) -> None:
