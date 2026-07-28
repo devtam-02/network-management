@@ -61,6 +61,8 @@ class NetmgrApp(Adw.Application):
         self._window = None
         self._show_window_on_start = show_window
         self._first_activate = True
+        #: Interface đang kết nối ở lần refresh trước; None = chưa biết.
+        self._connected_ifaces: set[str] | None = None
         self._apply_progress = None
 
     # ── vòng đời ────────────────────────────────────────────────────────────
@@ -101,6 +103,13 @@ class NetmgrApp(Adw.Application):
 
         self._facade.subscribe(self.refresh)
         self.refresh()
+
+        # Lần thoát trước đã `restore_all()`, nên Bộ cấu hình được nạp lại từ đĩa
+        # chỉ còn là cái nhãn: runtime đã về nguyên gốc. Áp lại route để trạng
+        # thái hiện ra khớp với thực tế.
+        if self._profiles.active is not None:
+            log.info("Áp lại route của Bộ cấu hình đang dùng sau khi khởi động")
+            self._profiles.reassert_routes()
 
         GLib.timeout_add(WATCHER_CHECK_DELAY_MS, self._check_watcher)
 
@@ -164,6 +173,7 @@ class NetmgrApp(Adw.Application):
             return
 
         snapshot = self._facade.snapshot()
+        self._reassert_if_reconnected(snapshot)
         active_profile = self._profiles.active if self._profiles else None
         status = compute_status(
             snapshot,
@@ -285,6 +295,29 @@ class NetmgrApp(Adw.Application):
             notification.set_priority(Gio.NotificationPriority.HIGH)
             self.send_notification("netmgr-op-failed", notification)
         self.refresh()
+
+    def _reassert_if_reconnected(self, snapshot) -> None:
+        """Thiết bị vừa kết nối lại thì áp lại route của Bộ cấu hình cho nó.
+
+        NetworkManager dựng lại cấu hình từ đĩa mỗi lần thiết bị lên, nên route
+        runtime của Bộ cấu hình biến mất — rút rồi cắm lại cáp là mất. Chỉ áp cho
+        thiết bị VỪA chuyển sang connected, chứ không áp mỗi lần refresh: sự kiện
+        của NetworkManager rất dồn dập, còn `apply_runtime_routes` lại sinh ra
+        sự kiện mới, nên áp bừa sẽ thành vòng lặp.
+        """
+        if self._profiles is None:
+            return
+
+        connected = {d.interface for d in snapshot.devices if d.is_connected}
+        if self._connected_ifaces is None:
+            self._connected_ifaces = connected      # lần đầu: xem mục do_startup
+            return
+
+        fresh = sorted(connected - self._connected_ifaces)
+        self._connected_ifaces = connected
+        if fresh:
+            log.info("Thiết bị vừa kết nối lại: %s", ", ".join(fresh))
+            self._profiles.reassert_routes(fresh)
 
     def read_runtime_ipv4(self, interface: str, callback) -> None:
         """Cấu hình IPv4 đang chạy trên thiết bị — dùng cho trang Định tuyến."""

@@ -372,3 +372,62 @@ def test_candidate_connections_filtered_by_device_type(world):
 def test_candidate_connections_unknown_device(world):
     service, *_ = world
     assert service.candidate_connections("không-có") == []
+
+
+# ── áp lại route sau khi thiết bị dựng lại cấu hình ──────────────────────────
+
+
+def _routed_profile():
+    from netmgr.domain.models import Ipv4Route
+
+    return new_profile(
+        "X",
+        bindings=[
+            Binding("enp3s0", BindingAction.ACTIVATE,
+                    routes=[Ipv4Route("10.0.0.0", 24, next_hop="10.207.154.254")]),
+            Binding("wlp2s0", BindingAction.ACTIVATE),
+        ],
+    )
+
+
+def test_reassert_ap_lai_route_va_automatic(world):
+    """Mở lại app hoặc cắm lại cáp thì route runtime đã mất — phải áp lại, nếu
+    không app ghi "đang dùng X" mà runtime đã về nguyên gốc."""
+    service, network, _proxy, _lan, _ = world
+    profile = _routed_profile()
+    service.save(profile)
+    service.apply(profile.id, on_done=lambda r: None)
+    network.calls.clear()
+
+    service.reassert_routes()
+    assert ("routes", "enp3s0") in network.calls
+
+
+def test_reassert_chi_cham_interface_duoc_chi_dinh(world):
+    service, network, _proxy, _lan, _ = world
+    profile = _routed_profile()
+    service.save(profile)
+    service.apply(profile.id, on_done=lambda r: None)
+    network.calls.clear()
+
+    service.reassert_routes(["wlp2s0"])
+    assert ("routes", "enp3s0") not in network.calls
+
+
+def test_reassert_khong_ngat_hay_kich_hoat_ket_noi(world):
+    """Đây là việc chữa cháy nền, không được phép làm rớt mạng."""
+    service, network, _proxy, _lan, _ = world
+    profile = _routed_profile()
+    service.save(profile)
+    service.apply(profile.id, on_done=lambda r: None)
+    network.calls.clear()
+
+    service.reassert_routes()
+    assert set(network.operations()) == {"routes"}
+
+
+def test_reassert_khong_lam_gi_khi_khong_dung_bo_cau_hinh(world):
+    service, network, _proxy, _lan, _ = world
+    network.calls.clear()
+    service.reassert_routes()
+    assert network.calls == []

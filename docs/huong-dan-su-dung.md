@@ -196,6 +196,17 @@ Ba điều đáng biết:
 
 Bộ cấu hình trỏ tới thứ đã bị xoá sẽ hiện ⚠ và không cho áp dụng.
 
+**Route của Bộ cấu hình được giữ lại tự động.** Vì chúng chỉ sống ở runtime, mỗi
+lần NetworkManager dựng lại cấu hình cho thiết bị là chúng mất. App tự áp lại
+trong hai trường hợp:
+
+- **Mở lại app** — lần thoát trước đã trả máy về cấu hình gốc, nên Bộ cấu hình
+  nạp lại từ đĩa chỉ còn là cái nhãn. App áp lại route ngay khi khởi động.
+- **Thiết bị vừa kết nối lại** — rút rồi cắm lại cáp, cắm lại iPhone, DHCP renew.
+
+Việc áp lại này **chỉ chạm vào route**, không kích hoạt hay ngắt kết nối nào và
+không đụng proxy — nó chạy nền nên không được phép làm rớt mạng.
+
 **Áp dụng lại.** Bộ cấu hình đang dùng có nút **Áp dụng lại** (và mục
 `🔄 Áp dụng lại '<tên>'` trong menu tray). Dùng khi mạng bị thứ khác thay đổi ở
 bên ngoài. Sửa Bộ cấu hình đang dùng rồi bấm **Lưu** thì app **tự áp lại ngay**,

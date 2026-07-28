@@ -13,6 +13,7 @@ from ..domain.models import (
     Binding,
     BindingAction,
     ConnType,
+    DeviceState,
     OpResult,
     Profile,
     ProfileApplyReport,
@@ -215,6 +216,51 @@ class ProfileService:
                 f"Đã trả {len(interfaces)} thiết bị về cấu hình gốc của máy"
             )
         return OpResult.success("Đã bỏ Bộ cấu hình")
+
+    def reassert_routes(self, interfaces: list[str] | None = None) -> None:
+        """Áp lại route + chế độ Automatic của Bộ cấu hình đang dùng.
+
+        Route của Bộ cấu hình chỉ sống ở runtime, nên chúng biến mất mỗi khi
+        NetworkManager dựng lại cấu hình cho thiết bị: mở lại app (lần thoát
+        trước đã `restore_all`), rút rồi cắm lại cáp, DHCP renew làm reactivate.
+        Sau những lúc đó app vẫn ghi "đang dùng Bộ cấu hình X" mà runtime thì đã
+        về nguyên gốc — nói một đằng làm một nẻo.
+
+        Chỉ chạm vào route, KHÔNG kích hoạt/ngắt kết nối và không đụng proxy:
+        đây là việc chữa cháy nền, không phải chuyển bối cảnh, nên nó không được
+        phép làm rớt mạng của người dùng.
+
+        `interfaces=None` nghĩa là mọi thiết bị Bộ cấu hình quản lý.
+        """
+        profile = self.active
+        if profile is None:
+            return
+
+        snapshot = self._network.snapshot()
+        for binding in profile.routing_bindings:
+            for device in snapshot.devices:
+                if not binding.matches(device):
+                    continue
+                if device.state is not DeviceState.CONNECTED:
+                    continue
+                if interfaces is not None and device.interface not in interfaces:
+                    continue
+                log.info(
+                    "Áp lại route của '%s' cho %s (Automatic %s)",
+                    profile.name, device.interface,
+                    "bật" if binding.automatic_routes else "tắt",
+                )
+                self._network.apply_runtime_routes(
+                    device.interface,
+                    list(binding.routes),
+                    not binding.automatic_routes,
+                    self._log_reassert,
+                )
+
+    @staticmethod
+    def _log_reassert(result) -> None:
+        if not result.ok:
+            log.warning("Áp lại route thất bại: %s", result.message)
 
     def restore_all(self) -> None:
         """Trả mọi thiết bị về cấu hình gốc — gọi khi thoát app."""
