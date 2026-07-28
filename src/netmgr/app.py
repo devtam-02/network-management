@@ -360,6 +360,10 @@ class NetmgrApp(Adw.Application):
         notification.set_body(text)
         self.send_notification("netmgr-info", notification)
 
+    def quit_app(self) -> None:
+        """Thoát hẳn — dùng từ nút trong cửa sổ Tuỳ chọn."""
+        self._quit()
+
     def _quit(self) -> None:
         self.release()
         self.quit()

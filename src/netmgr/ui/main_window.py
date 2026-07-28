@@ -31,6 +31,7 @@ class MainWindow(Adw.ApplicationWindow):
         ("routing", "Định tuyến", "network-transmit-receive-symbolic"),
         ("proxy", "Proxy", "preferences-system-network-symbolic"),
         ("diagnostics", "Chẩn đoán", "dialog-information-symbolic"),
+        ("settings", "Tuỳ chọn", "preferences-system-symbolic"),
     )
 
     def __init__(self, application, controller) -> None:
@@ -132,6 +133,7 @@ class MainWindow(Adw.ApplicationWindow):
             "routing": self._build_routing_page,
             "proxy": self._build_proxy_page,
             "diagnostics": self._build_diagnostics_page,
+            "settings": self._build_settings_page,
         }[self._current]
 
         # Tiêu đề phải theo trang đang xem, nếu không mọi trang đều mang tên
@@ -694,6 +696,69 @@ class MainWindow(Adw.ApplicationWindow):
             else None
         )
         self.refresh()
+
+    # ── trang Tuỳ chọn ──────────────────────────────────────────────────────
+
+    def _build_settings_page(self, _snapshot) -> Gtk.Widget:
+        from ..infra import autostart
+
+        page = Adw.PreferencesPage()
+        group = Adw.PreferencesGroup(title="Khởi động")
+
+        row = Adw.SwitchRow(
+            title="Mở khi máy khởi động",
+            subtitle=(
+                "App chạy nền ở khay hệ thống ngay sau khi đăng nhập, "
+                "không bật cửa sổ."
+            ),
+            active=autostart.is_enabled(),
+        )
+        row.set_subtitle_lines(2)
+        row.connect("notify::active", self._on_autostart_toggled)
+        group.add(row)
+
+        path_row = Adw.ActionRow(
+            title="Lệnh chạy nền",
+            subtitle=autostart.launch_command(),
+            sensitive=False,
+        )
+        path_row.set_subtitle_lines(2)
+        group.add(path_row)
+        page.add(group)
+
+        window_group = Adw.PreferencesGroup(
+            title="Cửa sổ này",
+            description=(
+                "Đóng cửa sổ chỉ ẩn đi, app vẫn chạy ở khay. Muốn thoát hẳn thì "
+                "dùng Thoát trong menu khay."
+            ),
+        )
+        quit_row = Adw.ActionRow(
+            title="Thoát ứng dụng",
+            subtitle="Tắt cả khay; cấu hình mạng trở về nguyên gốc",
+        )
+        quit_button = Gtk.Button(
+            label="Thoát", valign=Gtk.Align.CENTER, css_classes=["destructive-action"]
+        )
+        quit_button.connect("clicked", lambda _b: self._controller.quit_app())
+        quit_row.add_suffix(quit_button)
+        window_group.add(quit_row)
+        page.add(window_group)
+        return self._scrolled(page)
+
+    def _on_autostart_toggled(self, row, _param) -> None:
+        from ..infra import autostart
+
+        wanted = row.get_active()
+        if wanted == autostart.is_enabled():
+            return
+        if autostart.set_enabled(wanted):
+            self.toast(
+                "Sẽ tự chạy khi đăng nhập" if wanted else "Đã tắt khởi động cùng máy"
+            )
+        else:
+            self.toast("Không đổi được cài đặt khởi động")
+            row.set_active(not wanted)
 
     # ── trang Chẩn đoán ─────────────────────────────────────────────────────
 

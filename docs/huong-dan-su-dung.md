@@ -90,7 +90,13 @@ Bấm lại vào app khi nó đang chạy sẽ mở lại cửa sổ chứ khôn
 ### Bước 6 — khởi động cùng máy (tuỳ chọn, mặc định TẮT)
 
 Mặc định app **không** tự chạy khi đăng nhập: bạn mở khi cần, thoát khi không
-cần. Muốn nó chạy sẵn ở tray mỗi lần đăng nhập:
+cần.
+
+**Cách dễ nhất — bật ngay trong app:** mở cửa sổ → **Tuỳ chọn** → gạt công tắc
+*Mở khi máy khởi động*. Trang đó cũng hiện luôn lệnh sẽ được chạy, để bạn biết
+chính xác cái gì khởi động.
+
+Hoặc từ terminal:
 
 ```bash
 ./install.sh autostart        # bật
@@ -332,7 +338,14 @@ Mật khẩu proxy lưu trong **GNOME Keyring**, không bao giờ ghi vào file 
 Khi bật proxy có xác thực, một bản sao được đặt vào dconf vì đó là chỗ duy nhất
 trình duyệt đọc được; bản sao đó bị xoá khi tắt proxy.
 
-### 5.6 Chẩn đoán
+### 5.6 Tuỳ chọn
+
+- **Mở khi máy khởi động** — bật/tắt ngay tại đây, không cần ra terminal. Kèm
+  dòng cho biết lệnh nào sẽ được chạy lúc đăng nhập.
+- **Thoát ứng dụng** — tắt cả khay. Cấu hình mạng trở về nguyên gốc vì route của
+  Bộ cấu hình chỉ tồn tại ở runtime.
+
+### 5.7 Chẩn đoán
 
 Trả lời câu hỏi kinh điển *"tôi tắt proxy rồi mà sao `apt` vẫn đi qua proxy?"* —
 trang này cho thấy **từng lớp** đang ở trạng thái nào, cùng với các quyền polkit

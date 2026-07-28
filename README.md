@@ -10,8 +10,11 @@ quản lý proxy, kết nối có dây/Wi-Fi, và route tĩnh IPv4.
 
 ```bash
 ./install.sh            # kiểm tra môi trường, không thay đổi gì
-./install.sh install    # cài lệnh netmgr + autostart (không cần sudo)
+./install.sh install    # cài lệnh netmgr + mục trong menu ứng dụng (không cần sudo)
 ```
+
+Mở app: bấm **Quản lý mạng** trong menu ứng dụng, hoặc gõ `netmgr`.
+Khởi động cùng máy: bật trong app ở trang **Tuỳ chọn** (mặc định tắt).
 
 ## Trạng thái
 
@@ -45,18 +48,22 @@ sớm vì không phụ thuộc mạng). Trước khi đụng vào gì, app **ch�
 bước nào hỏng thì khôi phục toàn bộ. Kết nối đã đúng sẵn được bỏ qua thay vì kích
 hoạt lại — áp dụng lại chính bối cảnh đang chạy không làm rớt mạng.
 
-## Sửa route IPv4
+## Route IPv4
 
-Mở cửa sổ → Kết nối → bấm mũi tên ở một connection → nhóm **Route IPv4**.
+Route thuộc về **Bộ cấu hình**, không thuộc cấu hình máy: mở Bộ cấu hình → mục
+**Route riêng** → `+`. Mỗi route chọn đi qua thiết bị nào.
 
-- Thêm/sửa/xoá, hoặc **bật/tắt tạm** một route mà không xoá
 - **Nhập nhanh một dòng**: `10.20.0.0/16 via 192.168.1.1 metric 100`
-- **Dán hàng loạt** nhiều dòng từ tài liệu mạng nội bộ, và **chép** ngược lại
 - Validate ngay khi gõ; lỗi "không phải địa chỉ mạng" có nút *Sửa giúp tôi*
-- Route tĩnh (🔵) sửa được, route do DHCP cấp (⚪) chỉ đọc
 
-Thay đổi chỉ ghi xuống khi bấm **Lưu** hoặc **Lưu & Áp dụng** — sửa nhiều thứ rồi
-áp dụng một lần. "Lưu" thôi thì có hiệu lực ở lần kết nối sau.
+> **App không bao giờ ghi cấu hình mạng xuống đĩa.** Route được áp ở runtime bằng
+> `reapply()`. Bỏ Bộ cấu hình hoặc thoát app là máy trở về đúng cấu hình gốc.
+>
+> Lý do: `update2(TO_DISK)` khiến NetworkManager ghi ra `/etc/netplan/90-NM-*.yaml`
+> và vòng chuyển đổi đó làm mất `connection.interface-name` — profile cổng LAN
+> biến thành profile chung rồi bám sang cổng USB vừa cắm.
+
+Trang **Kết nối → chi tiết** chỉ để xem, không sửa.
 
 ## Proxy hoạt động thế nào
 
@@ -110,13 +117,16 @@ PYTHONPATH=src python3 -m netmgr window
 PYTHONPATH=src python3 -m netmgr tray --debug
 ```
 
-Cửa sổ cấu hình cũng mở được từ menu tray → **Cài đặt…**. Đóng cửa sổ chỉ ẩn đi,
-app vẫn chạy ở tray.
+Đóng cửa sổ chỉ ẩn đi, app vẫn chạy ở tray. Bấm lại app trong menu ứng dụng sẽ
+mở lại cửa sổ. Thoát hẳn: menu tray → **Thoát**, hoặc **Tuỳ chọn** → *Thoát ứng dụng*.
 
 ## Khởi động cùng hệ thống
 
+Mặc định **tắt**. Bật trong app: **Tuỳ chọn** → *Mở khi máy khởi động*. Hoặc:
+
 ```bash
-cp data/netmgr-autostart.desktop ~/.config/autostart/
+./install.sh autostart        # bật
+./install.sh no-autostart     # tắt
 ```
 
 ## Test
@@ -135,7 +145,7 @@ thay đổi cấu hình mạng của máy.
 src/netmgr/
 ├── domain/      Model + validator — THUẦN PYTHON, không import gi
 ├── infra/       NMFacade (libnm), các ProxyLayer, lưu trữ, keyring
-├── services/    ProxyService — điều phối nhiều lớp
+├── services/    ProxyService, ProfileService, ProfileApplier
 ├── tray/        StatusNotifierItem tự implement trên Gio.DBus
 ├── ui/          GTK4 + libadwaita; view_models.py là phần thuần & test được
 ├── app.py       Adw.Application, single-instance, kiêm controller cho UI
