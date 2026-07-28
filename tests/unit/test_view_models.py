@@ -19,6 +19,7 @@ from netmgr.domain.models import (
 from netmgr.infra.proxy_store import new_config
 from netmgr.ui.view_models import (
     lost_default_route_warning,
+    runtime_routes_summary,
     connection_detail,
     connection_rows,
     empty_wifi_hint,
@@ -475,3 +476,31 @@ def test_khong_canh_bao_khi_bo_cau_hinh_tu_khai_default_route():
     snap = _snap_default_via("enx1234")
     routes = [_route(), _route("0.0.0.0", 0)]
     assert lost_default_route_warning("enx1234", routes, snap) == ""
+
+
+# ── trạng thái route ĐANG CHẠY (Cài đặt Ubuntu không hiện được) ───────────────
+
+
+def test_runtime_summary_automatic_bat():
+    from netmgr.domain.models import RuntimeIpv4
+
+    text = runtime_routes_summary(RuntimeIpv4("enp1s0", automatic_routes=True))
+    assert "Automatic BẬT" in text
+    assert "không có route đặt tay" in text
+
+
+def test_runtime_summary_automatic_tat_va_dem_route():
+    from netmgr.domain.models import Ipv4Route, RuntimeIpv4
+
+    runtime = RuntimeIpv4(
+        "enp1s0", automatic_routes=False,
+        routes=[Ipv4Route("10.0.0.0", 8, next_hop="10.207.154.254")],
+    )
+    text = runtime_routes_summary(runtime)
+    assert "Automatic TẮT" in text
+    assert "1 route đặt tay" in text
+
+
+def test_runtime_summary_chua_doc_duoc():
+    """Đọc bất đồng bộ nên lần vẽ đầu chưa có dữ liệu — không hiện gì cả."""
+    assert runtime_routes_summary(None) == ""

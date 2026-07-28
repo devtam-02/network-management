@@ -50,6 +50,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._current = "profiles"
         #: Báo cáo tiến trình khi đang áp dụng Bộ cấu hình; None = không chạy.
         self._apply_report = None
+        #: interface -> cấu hình IPv4 đang chạy, đọc bất đồng bộ. Cần vì
+        #: `snapshot()` chỉ thấy cấu hình đã lưu trên đĩa.
+        self._runtime_ipv4: dict[str, object] = {}
         self._lookup_query = ""
         self._lookup_result = None
         self._content_stack = Gtk.Stack(
@@ -655,8 +658,14 @@ class MainWindow(Adw.ApplicationWindow):
             page.add(group)
 
         # ── bảng route theo interface ──
+        self._request_runtime_ipv4(snapshot)
         for group_vm in routing.group_by_interface(routes):
-            group = Adw.PreferencesGroup(title=group_vm.interface)
+            group = Adw.PreferencesGroup(
+                title=group_vm.interface,
+                description=vm.runtime_routes_summary(
+                    self._runtime_ipv4.get(group_vm.interface)
+                ),
+            )
             for entry_vm in group_vm.routes:
                 r = entry_vm.route
                 bits = []
@@ -689,6 +698,30 @@ class MainWindow(Adw.ApplicationWindow):
                 group.add(row)
             page.add(group)
         return self._scrolled(page)
+
+    def _request_runtime_ipv4(self, snapshot) -> None:
+        """Đọc cấu hình đang chạy của các thiết bị đã kết nối.
+
+        Bất đồng bộ nên lần vẽ đầu chưa có dữ liệu; kết quả về thì vẽ lại. Chỉ
+        vẽ lại khi có thay đổi thật, nếu không sẽ thành vòng lặp vô tận.
+        """
+        for device in snapshot.devices:
+            if not device.is_connected:
+                continue
+            self._controller.read_runtime_ipv4(
+                device.interface,
+                lambda runtime, iface=device.interface: self._on_runtime_ipv4(
+                    iface, runtime
+                ),
+            )
+
+    def _on_runtime_ipv4(self, interface: str, runtime) -> None:
+        previous = self._runtime_ipv4.get(interface)
+        if previous == runtime:
+            return
+        self._runtime_ipv4[interface] = runtime
+        if self._current == "routing":
+            self.refresh()
 
     def _do_lookup(self, text: str) -> None:
         from ..domain import routing

@@ -35,6 +35,7 @@ from ..domain.models import (
     PermissionState,
     Permissions,
     RouteSource,
+    RuntimeIpv4,
     SystemRoute,
     WifiStatus,
 )
@@ -614,6 +615,45 @@ class NMFacade:
             setting.set_property("ignore-auto-routes", ignore_auto)
 
         self._reapply_with(interface, mutate, callback, f"Áp route cho {interface}")
+
+    def read_runtime_ipv4(self, interface: str, callback) -> None:
+        """Đọc cấu hình IPv4 ĐANG CHẠY trên thiết bị; `None` nếu không đọc được.
+
+        Cần thiết vì `snapshot()` chỉ thấy cấu hình đã lưu. Không có hàm này thì
+        app không có cách nào cho người dùng thấy Bộ cấu hình đã đổi được gì —
+        và Cài đặt của Ubuntu thì đọc đĩa nên cũng không thấy.
+        """
+        device = self._device_by_iface(interface)
+        if device is None:
+            callback(None)
+            return
+        device.get_applied_connection_async(
+            0, None, self._on_runtime_ipv4, (interface, callback)
+        )
+
+    def _on_runtime_ipv4(self, device, result, user_data) -> None:
+        interface, callback = user_data
+        try:
+            connection, _version = device.get_applied_connection_finish(result)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("không đọc được cấu hình đang chạy của %s: %s", interface, exc)
+            callback(None)
+            return
+
+        setting = connection.get_setting_ip4_config()
+        if setting is None:
+            callback(None)
+            return
+        callback(
+            RuntimeIpv4(
+                interface=interface,
+                automatic_routes=not setting.get_ignore_auto_routes(),
+                routes=[
+                    _route_from_nm(setting.get_route(i), RouteSource.STATIC)
+                    for i in range(setting.get_num_routes())
+                ],
+            )
+        )
 
     def restore_runtime(self, interface: str, callback: OpCallback | None = None) -> None:
         """Trả thiết bị về đúng cấu hình đã lưu của máy.

@@ -464,6 +464,22 @@ class Binding:
         return self.device_match == device.interface
 
 
+@dataclass(slots=True)
+class RuntimeIpv4:
+    """Cấu hình IPv4 **đang chạy** trên thiết bị.
+
+    Khác hẳn `ConnectionInfo.ipv4`, vốn là cấu hình ĐÃ LƯU trên đĩa. App chỉ đổi
+    runtime và không bao giờ ghi đĩa, nên hai thứ này lệch nhau là chuyện bình
+    thường — và đó là lý do Cài đặt của Ubuntu (đọc đĩa) không phản ánh được
+    những gì Bộ cấu hình đang làm.
+    """
+
+    interface: str
+    #: Có đang để route ở chế độ Automatic không (nghịch đảo ignore-auto-routes).
+    automatic_routes: bool
+    routes: list[Ipv4Route] = field(default_factory=list)
+
+
 @dataclass(frozen=True, slots=True)
 class SystemRoute:
     """Một dòng trong bảng định tuyến thật của kernel.

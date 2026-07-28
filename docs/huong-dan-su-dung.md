@@ -223,6 +223,15 @@ cùng tồn tại rồi tranh nhau theo metric, thứ bạn đặt chưa chắc 
 Automatic, chứ không phải bỏ qua. Nhờ vậy mỗi Bộ cấu hình quyết định trọn vẹn
 bảng route của các mạng nó bật, không phụ thuộc Bộ cấu hình chạy trước đó.
 
+**Kiểm tra ở đâu?** Trang **Định tuyến** trong app, dòng ngay dưới tên mỗi
+thiết bị: *"Đang chạy: Automatic BẬT/TẮT · N route đặt tay"*.
+
+> **Đừng kiểm tra bằng Cài đặt của Ubuntu.** Settings đọc cấu hình **trên đĩa**,
+> còn app cố ý không bao giờ ghi đĩa — nó chỉ đổi cấu hình **đang chạy**. Nên
+> Settings luôn hiện trạng thái gốc của máy, bất kể Bộ cấu hình đang làm gì. Đây
+> là hệ quả trực tiếp của nguyên tắc "không đụng vào cấu hình mạng của máy", chứ
+> không phải lỗi.
+
 > ⚠ Tắt Automatic bỏ **tất cả** route do DHCP cấp, kể cả default route. Nếu bạn
 > đặt route riêng cho đúng cái mạng đang là đường ra Internet, app hiện cảnh báo
 > ngay dưới danh sách route — khi ấy hãy thêm một route `0.0.0.0/0` vào Bộ cấu

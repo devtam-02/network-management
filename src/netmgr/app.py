@@ -286,6 +286,10 @@ class NetmgrApp(Adw.Application):
             self.send_notification("netmgr-op-failed", notification)
         self.refresh()
 
+    def read_runtime_ipv4(self, interface: str, callback) -> None:
+        """Cấu hình IPv4 đang chạy trên thiết bị — dùng cho trang Định tuyến."""
+        self._network.read_runtime_ipv4(interface, callback)
+
     def open_wifi_settings(self) -> None:
         """Kết nối mạng Wi-Fi mới là việc của GNOME (§3.2.1) — mở thẳng tới đó."""
         try:

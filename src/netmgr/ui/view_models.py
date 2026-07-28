@@ -393,3 +393,17 @@ def lost_default_route_warning(interface: str, routes, snapshot) -> str:
         "Automatic bị tắt, nên default route của DHCP sẽ mất. Hãy thêm một "
         "route 0.0.0.0/0 cho nó, hoặc xoá các route riêng ở đây."
     )
+
+
+def runtime_routes_summary(runtime) -> str:
+    """Mô tả chế độ route ĐANG CHẠY của một interface.
+
+    Cần hiện trong app vì Cài đặt của Ubuntu đọc cấu hình trên đĩa, mà app thì
+    không bao giờ ghi đĩa — nên Settings không phản ánh được Bộ cấu hình.
+    """
+    if runtime is None:
+        return ""
+    mode = "Automatic BẬT" if runtime.automatic_routes else "Automatic TẮT"
+    if runtime.routes:
+        return f"Đang chạy: {mode} · {len(runtime.routes)} route đặt tay"
+    return f"Đang chạy: {mode} · không có route đặt tay"
