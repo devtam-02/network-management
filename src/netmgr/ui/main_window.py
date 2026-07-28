@@ -147,7 +147,19 @@ class MainWindow(Adw.ApplicationWindow):
             next(t for k, t, _i in self.PAGES if k == self._current)
         )
 
-        page = builder(snapshot)
+        try:
+            page = builder(snapshot)
+        except Exception:       # noqa: BLE001
+            # GTK nuốt exception trong signal handler: nếu để lọt, vùng nội dung
+            # đứng lại ở trang cũ và nút sidebar trông như chết mà không báo gì.
+            # Đúng lỗi đã xảy ra với trang Định tuyến (`self._network` không tồn
+            # tại). Thà hiện lỗi ra còn hơn im lặng.
+            log.exception("Không dựng được trang %s", self._current)
+            page = self._placeholder(
+                f"Không mở được trang này — xem log để biết chi tiết.\n"
+                f"(trang: {self._current})"
+            )
+
         old = self._pages.get(self._current)
         if old is not None:
             self._content_stack.remove(old)

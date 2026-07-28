@@ -23,6 +23,8 @@ class FakeNetwork:
         self.last_ignore_auto: bool | None = None
         #: uuid -> Automatic đã ghi xuống cấu hình đã lưu.
         self.stored_modes: dict[str, bool] = {}
+        #: interface -> thông báo lỗi khi kích hoạt thiết bị đó.
+        self.fail_activate: dict[str, str] = {}
 
     def snapshot(self):
         return self._snapshot
@@ -45,6 +47,11 @@ class FakeNetwork:
         self.calls.append(("activate", uuid))
         #: Interface mà lần activate gần nhất nhắm tới — None nghĩa là để NM chọn.
         self.last_activate_interface = interface
+        # NM thất bại theo từng thiết bị, không phải toàn bộ: đứng ở nơi không có
+        # Wi-Fi quen thì chỉ Wi-Fi lỗi, mạng dây vẫn lên.
+        if interface in self.fail_activate:
+            callback(OpResult(False, self.fail_activate[interface]))
+            return
         if "activate" in self.fail:
             callback(OpResult(False, self.fail["activate"]))
             return

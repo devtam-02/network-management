@@ -321,7 +321,7 @@ class NetmgrApp(Adw.Application):
 
     def read_runtime_ipv4(self, interface: str, callback) -> None:
         """Cấu hình IPv4 đang chạy trên thiết bị — dùng cho trang Định tuyến."""
-        self._network.read_runtime_ipv4(interface, callback)
+        self._facade.read_runtime_ipv4(interface, callback)
 
     def open_wifi_settings(self) -> None:
         """Kết nối mạng Wi-Fi mới là việc của GNOME (§3.2.1) — mở thẳng tới đó."""

@@ -194,6 +194,12 @@ Ba điều đáng biết:
 - **Thiết bị vắng mặt được bỏ qua** (laptop rời dock chẳng hạn), trừ khi bạn
   đánh dấu *Bắt buộc* cho thiết bị đó.
 
+**Wi-Fi chỉ cần bật là đủ.** Bật công tắc Wi-Fi trong Bộ cấu hình nghĩa là "bật
+radio lên", app không bắt buộc nó phải kết nối được. Chuyện đó phụ thuộc mạng đã
+lưu có trong tầm phủ hay không — thứ Bộ cấu hình không kiểm soát được. Bước kích
+hoạt sẽ báo `Wi-Fi: 0/1 kết nối được` và tiếp tục bình thường; NetworkManager tự
+kết nối khi thấy mạng quen.
+
 Bộ cấu hình trỏ tới thứ đã bị xoá sẽ hiện ⚠ và không cho áp dụng.
 
 **Route của Bộ cấu hình được giữ lại tự động.** Vì chúng chỉ sống ở runtime, mỗi

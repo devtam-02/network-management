@@ -678,7 +678,7 @@ def test_co_route_rieng_thi_tat_automatic(world):
     )
     report, _ = run(make_applier(network, proxy), profile)
 
-    assert report.ok, report.failure
+    assert report.ok, report.summary()
     assert ("routes", "enp3s0") in network.calls
     assert network.last_ignore_auto is True
 
@@ -692,3 +692,58 @@ def test_automatic_la_suy_ra_khong_phai_lua_chon():
     assert Binding(
         "enp3s0", routes=[Ipv4Route("10.0.0.0", 8)]
     ).automatic_routes is False
+
+
+# ── Wi-Fi: chỉ cần bật radio, không bắt buộc kết nối được ────────────────────
+
+
+def _wifi_profile():
+    return new_profile(
+        "Nội bộ + wifi",
+        bindings=[
+            Binding("enp3s0", BindingAction.ACTIVATE),
+            Binding("wlp2s0", BindingAction.ACTIVATE),
+        ],
+    )
+
+
+def test_wifi_khong_ket_noi_duoc_van_ap_dung_thanh_cong():
+    """Đứng ở nơi không có mạng Wi-Fi đã lưu thì NM trả "has no connections".
+    Không được để nó làm cả Bộ cấu hình thất bại khi mạng dây vẫn ổn."""
+    wifi_dev = wifi_device(state=DeviceState.DISCONNECTED)
+    eth_dev = eth_device(state=DeviceState.DISCONNECTED, ip=None)
+    lan = eth_conn("LAN")
+    snap = snapshot(devices=[eth_dev, wifi_dev], connections=[lan])
+    network = FakeNetwork(snap)
+    network.fail_activate["wlp2s0"] = "the device 'wlp2s0' has no connections"
+
+    report, _ = run(make_applier(network, FakeProxyService([])), _wifi_profile())
+    assert report.ok, report.summary()
+    assert "Wi-Fi" in report.step("activate").detail
+
+
+def test_bat_thiet_bi_wifi_thi_tu_bat_radio():
+    """Không suy ra điều này thì radio vẫn tắt và kích hoạt chắc chắn thất bại."""
+    wifi_dev = wifi_device(state=DeviceState.UNAVAILABLE)
+    snap = snapshot(devices=[wifi_dev], connections=[], wifi_enabled=False)
+    network = FakeNetwork(snap)
+
+    profile = new_profile("W", bindings=[Binding("wlp2s0", BindingAction.ACTIVATE)])
+    report, _ = run(make_applier(network, FakeProxyService([])), profile)
+
+    assert report.ok, report.summary()
+    assert ("wifi", True) in network.calls
+
+
+def test_verify_khong_cho_thiet_bi_wifi():
+    """Chờ Wi-Fi lên sẽ treo 30 giây rồi thất bại ở nơi không có mạng quen."""
+    wifi_dev = wifi_device(state=DeviceState.DISCONNECTED)
+    eth_dev = eth_device(state=DeviceState.CONNECTED)
+    lan = eth_conn("LAN", active=True)
+    eth_dev.active_connection_uuid = lan.uuid
+    snap = snapshot(devices=[eth_dev, wifi_dev], connections=[lan])
+    network = FakeNetwork(snap)
+    network.fail_activate["wlp2s0"] = "the device 'wlp2s0' has no connections"
+
+    report, _ = run(make_applier(network, FakeProxyService([])), _wifi_profile())
+    assert report.step("verify").status is not StepStatus.FAILED
