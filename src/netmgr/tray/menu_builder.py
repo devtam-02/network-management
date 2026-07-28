@@ -37,6 +37,7 @@ class MenuActions:
     disable_proxy: Callable[[], None] | None = None
     import_current_proxy: Callable[[], None] | None = None
     copy_proxy_snippet: Callable[[], None] | None = None
+    manage_proxy: Callable[[], None] | None = None
     # ── Bộ cấu hình (P5) ──
     apply_profile: Callable[[str], None] | None = None
     clear_profile: Callable[[], None] | None = None
@@ -78,6 +79,7 @@ def _connection_items(
         items.append(
             checkbox(
                 label,
+                key=f"conn:{conn.uuid}",
                 checked=conn.is_active,
                 # Device đang chuyển trạng thái thì khoá lại, nếu không hai lần
                 # bấm liên tiếp sẽ gửi hai lệnh chồng nhau.
@@ -149,6 +151,7 @@ def _wifi_submenu(snapshot, actions: MenuActions) -> MenuItem | None:
     children: list[MenuItem] = [
         checkbox(
             "Bật Wi-Fi",
+            key="wifi:toggle",
             checked=snapshot.wifi_enabled,
             enabled=snapshot.wifi_hardware_enabled and snapshot.permissions.can_toggle_wifi,
             action=lambda: actions.set_wifi_enabled(not snapshot.wifi_enabled),
@@ -156,7 +159,7 @@ def _wifi_submenu(snapshot, actions: MenuActions) -> MenuItem | None:
     ]
     if not snapshot.wifi_hardware_enabled:
         children.append(info("Wi-Fi bị tắt bằng công tắc phần cứng"))
-        return submenu("Wi-Fi", children)
+        return submenu("Wi-Fi", children, key="wifi")
 
     saved = snapshot.saved_wifi_connections()
     children.append(separator())
@@ -166,9 +169,10 @@ def _wifi_submenu(snapshot, actions: MenuActions) -> MenuItem | None:
         # để một danh sách trống khó hiểu.
         children.append(info("Chưa có mạng Wi-Fi nào được lưu"))
         children.append(
-            item("Kết nối lần đầu bằng cài đặt hệ thống…", action=actions.open_wifi_settings)
+            item("Kết nối lần đầu bằng cài đặt hệ thống…", key="wifi:settings",
+                 action=actions.open_wifi_settings)
         )
-        return submenu("Wi-Fi", children)
+        return submenu("Wi-Fi", children, key="wifi")
 
     children.extend(
         _connection_items(
@@ -177,8 +181,9 @@ def _wifi_submenu(snapshot, actions: MenuActions) -> MenuItem | None:
         )
     )
     children.append(separator())
-    children.append(item("Quản lý mạng đã lưu…" + TODO_SUFFIX, enabled=False))
-    return submenu("Wi-Fi", children)
+    children.append(item("Quản lý mạng đã lưu…" + TODO_SUFFIX, key="wifi:manage",
+                         enabled=False))
+    return submenu("Wi-Fi", children, key="wifi")
 
 
 def _wired_submenu(snapshot, actions: MenuActions) -> MenuItem | None:
@@ -204,18 +209,19 @@ def _wired_submenu(snapshot, actions: MenuActions) -> MenuItem | None:
     else:
         children.append(info("Chưa có cấu hình có dây nào"))
 
-    return submenu("Có dây", children)
+    return submenu("Có dây", children, key="wired")
 
 
 def _proxy_submenu(proxy, actions: MenuActions) -> MenuItem:
     """Submenu proxy (F1). `proxy` là ProxyService, None nếu chưa khởi tạo được."""
     if proxy is None or actions.activate_proxy is None:
-        return item("Proxy" + TODO_SUFFIX, enabled=False)
+        return item("Proxy" + TODO_SUFFIX, key="proxy", enabled=False)
 
     configs = proxy.configs
     active = proxy.active
     children: list[MenuItem] = [
-        radio("Tắt", selected=active is None, action=actions.disable_proxy)
+        radio("Tắt", key="proxy:off", selected=active is None,
+              action=actions.disable_proxy)
     ]
 
     for config in configs:
@@ -223,6 +229,7 @@ def _proxy_submenu(proxy, actions: MenuActions) -> MenuItem:
         children.append(
             radio(
                 f"{config.name} — {config.summary()}",
+                key=f"proxy:{cid}",
                 selected=active is not None and active.id == cid,
                 action=lambda cid=cid: actions.activate_proxy(cid),
             )
@@ -243,24 +250,28 @@ def _proxy_submenu(proxy, actions: MenuActions) -> MenuItem:
     children.append(separator())
     if actions.import_current_proxy is not None:
         children.append(
-            item("Nhập cấu hình proxy đang có của hệ thống…",
+            item("Nhập cấu hình proxy đang có của hệ thống…", key="proxy:import",
                  action=actions.import_current_proxy)
         )
     if actions.copy_proxy_snippet is not None:
         children.append(
-            item("Chép lệnh export cho terminal đang mở",
+            item("Chép lệnh export cho terminal đang mở", key="proxy:copy",
                  action=actions.copy_proxy_snippet)
         )
-    children.append(item("Quản lý cấu hình proxy…" + TODO_SUFFIX, enabled=False))
+    if actions.manage_proxy is not None:
+        children.append(
+            item("Quản lý cấu hình proxy…", key="proxy:manage",
+                 action=actions.manage_proxy)
+        )
 
     label = "Proxy: " + (active.name if active and active.is_enabled else "Tắt")
-    return submenu(label, children)
+    return submenu(label, children, key="proxy")
 
 
 def _profile_submenu(profiles, actions: MenuActions) -> MenuItem:
     """Radio group chuyển bối cảnh một click (FR-PR2)."""
     if profiles is None or actions.apply_profile is None:
-        return item("Bộ cấu hình" + TODO_SUFFIX, enabled=False)
+        return item("Bộ cấu hình" + TODO_SUFFIX, key="profiles", enabled=False)
 
     active = profiles.active
     busy = profiles.busy
@@ -274,6 +285,7 @@ def _profile_submenu(profiles, actions: MenuActions) -> MenuItem:
         children.append(
             radio(
                 label,
+                key=f"profile:{pid}",
                 selected=active is not None and active.id == pid,
                 # Đang áp dụng thì khoá hết: hai lệnh chồng nhau sẽ để mạng ở
                 # trạng thái lai không ai đoán được.
@@ -289,6 +301,7 @@ def _profile_submenu(profiles, actions: MenuActions) -> MenuItem:
     children.append(
         radio(
             "✖ Không dùng Bộ cấu hình",
+            key="profile:none",
             selected=active is None,
             enabled=not busy,
             action=actions.clear_profile,
@@ -298,16 +311,17 @@ def _profile_submenu(profiles, actions: MenuActions) -> MenuItem:
     children.append(separator())
     if actions.capture_profile is not None:
         children.append(
-            item("Lưu trạng thái hiện tại thành Bộ cấu hình…",
+            item("Lưu trạng thái hiện tại thành Bộ cấu hình…", key="profile:capture",
                  enabled=not busy, action=actions.capture_profile)
         )
     if actions.manage_profiles is not None:
-        children.append(item("Quản lý Bộ cấu hình…", action=actions.manage_profiles))
+        children.append(item("Quản lý Bộ cấu hình…", key="profile:manage",
+                             action=actions.manage_profiles))
 
     label = "Bộ cấu hình: " + (
         "đang áp dụng…" if busy else (active.label if active else "Không dùng")
     )
-    return submenu(label, children)
+    return submenu(label, children, key="profiles")
 
 
 def build_menu(
@@ -352,7 +366,7 @@ def build_menu(
     if not snapshot.permissions.can_edit_connections:
         items.append(info("Không đủ quyền để sửa cấu hình mạng"))
 
-    items.append(item("Thoát", action=actions.quit))
+    items.append(item("Thoát", key="quit", action=actions.quit))
     return items
 
 

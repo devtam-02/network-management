@@ -26,6 +26,13 @@ class ToggleType(str, Enum):
 @dataclass(slots=True)
 class MenuItem:
     label: str = ""
+    #: Định danh ỔN ĐỊNH của mục, giữ nguyên qua các lần dựng lại menu.
+    #:
+    #: Bắt buộc phải có với mọi mục bấm được. Nếu để id chạy theo thứ tự thì
+    #: mỗi lần menu đổi nội dung (vd thiết bị kết nối làm xuất hiện thêm một
+    #: dòng trạng thái) mọi id phía sau sẽ dịch đi — mà GNOME Shell vẫn giữ
+    #: layout cũ, nên cú click sau đó gửi id đã lệch và trúng nhầm mục khác.
+    key: str = ""
     action: Callable[[], None] | None = None
     enabled: bool = True
     visible: bool = True
@@ -117,20 +124,40 @@ def radio(label: str, selected: bool, action=None, **kw) -> MenuItem:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+class IdAllocator:
+    """Cấp id cố định cho từng `key`, nhớ qua các lần dựng lại menu.
+
+    Một key luôn nhận đúng một id trong suốt vòng đời tiến trình. Nhờ vậy layout
+    mà GNOME Shell đang giữ vẫn trỏ đúng mục dù menu đã được dựng lại.
+    """
+
+    def __init__(self) -> None:
+        self._ids: dict[str, int] = {}
+        self._next = ROOT_ID + 1
+
+    def id_for(self, key: str) -> int:
+        if key not in self._ids:
+            self._ids[key] = self._next
+            self._next += 1
+        return self._ids[key]
+
+
 class Menu:
     """Cây menu đã gán id, sẵn sàng phục vụ dbusmenu."""
 
-    def __init__(self, items: list[MenuItem]) -> None:
+    def __init__(self, items: list[MenuItem], allocator: IdAllocator | None = None) -> None:
         self.root = MenuItem(label="root", children=items, id=ROOT_ID)
         self._by_id: dict[int, MenuItem] = {ROOT_ID: self.root}
+        self._allocator = allocator or IdAllocator()
         self._assign_ids()
 
     def _assign_ids(self) -> None:
-        next_id = ROOT_ID + 1
-        for node in self._walk(self.root, skip_root=True):
-            node.id = next_id
-            self._by_id[next_id] = node
-            next_id += 1
+        # Mục không khai `key` (dòng trạng thái, gạch ngang) lấy key theo vị trí:
+        # chúng không bấm được nên id dịch đi cũng vô hại.
+        for position, node in enumerate(self._walk(self.root, skip_root=True)):
+            key = node.key or f"_pos:{position}:{node.label}"
+            node.id = self._allocator.id_for(key)
+            self._by_id[node.id] = node
 
     def _walk(self, node: MenuItem, skip_root: bool = False) -> Iterator[MenuItem]:
         if not skip_root:

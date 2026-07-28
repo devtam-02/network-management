@@ -708,3 +708,78 @@ def test_no_wifi_submenu_when_adapter_unavailable(rec):
     assert find(menu, "Bật Wi-Fi") is None
     assert find(menu, "không khả dụng") is None
     assert not any(n.has_children and "Wi-Fi" in n.label for n in menu)
+
+
+# ── id ổn định (lỗi thật: click một lần rồi menu chết) ───────────────────────
+
+
+def build_with(rec, connected: bool, conn, allocator):
+    from netmgr.tray.menu_model import Menu
+
+    conn.is_active = connected
+    dev = (
+        eth_device("enp1s0")
+        if connected
+        else eth_device("enp1s0", state=DeviceState.DISCONNECTED, ip=None)
+    )
+    snap = snapshot(devices=[dev, wifi_device()], connections=[conn])
+    return Menu(build_menu(snap, compute_status(snap), rec.actions()), allocator)
+
+
+def test_ids_stay_stable_when_menu_content_changes(rec):
+    """Lỗi thật: thiết bị kết nối làm xuất hiện thêm dòng trạng thái, mọi id
+    phía sau dịch đi. GNOME Shell vẫn giữ layout cũ nên cú click kế tiếp gửi id
+    đã lệch — bấm Thoát lại trúng mục khác, menu như bị chết."""
+    from netmgr.tray.menu_model import IdAllocator
+
+    conn = eth_conn("LAN", interface="enp1s0")
+    allocator = IdAllocator()
+
+    before = {n.key: n.id for n in build_with(rec, False, conn, allocator) if n.key}
+    after = {n.key: n.id for n in build_with(rec, True, conn, allocator) if n.key}
+
+    assert before, "menu phải có mục mang key"
+    for key, ident in before.items():
+        assert after.get(key) == ident, f"id của {key} đã đổi: {ident} → {after.get(key)}"
+
+
+def test_every_clickable_item_has_a_stable_key(rec):
+    """Mục không có key sẽ lấy id theo vị trí — bấm sai khi menu dựng lại."""
+    snap = snapshot(
+        devices=[eth_device("enp1s0"), wifi_device()],
+        connections=[eth_conn("LAN", interface="enp1s0"), wifi_conn("W")],
+    )
+    menu = Menu(
+        build_menu(
+            snap, compute_status(snap), profile_actions(rec),
+            proxy=FakeProxyService([make_proxy_config()]),
+            profiles=FakeProfileService([make_profile()]),
+        )
+    )
+    missing = [n.label for n in menu if (n.action or n.has_children) and not n.key]
+    assert missing == []
+
+
+def test_quit_keeps_same_id_after_state_change(rec):
+    from netmgr.tray.menu_model import IdAllocator
+
+    conn = eth_conn("LAN", interface="enp1s0")
+    allocator = IdAllocator()
+    first = find(build_with(rec, False, conn, allocator), "Thoát").id
+    second = find(build_with(rec, True, conn, allocator), "Thoát").id
+    assert first == second
+
+
+def test_manage_proxy_opens_window(rec):
+    """Trước đây mục này bị khoá và ghi "(chưa có ở bản này)" dù trang Proxy
+    trong cửa sổ đã làm xong."""
+    actions = proxy_actions(rec)
+    actions.manage_proxy = lambda: rec.calls.append(("manage_proxy", None))
+    snap = snapshot()
+    menu = Menu(
+        build_menu(snap, compute_status(snap), actions, proxy=FakeProxyService())
+    )
+    node = find(menu, "Quản lý cấu hình proxy")
+    assert node.enabled is True
+    menu.activate(node.id)
+    assert rec.calls == [("manage_proxy", None)]

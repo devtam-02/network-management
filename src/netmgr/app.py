@@ -177,7 +177,8 @@ class NetmgrApp(Adw.Application):
                 build_menu(
                     snapshot, status, self._actions(),
                     proxy=self._proxy, profiles=self._profiles,
-                )
+                ),
+                self._tray.id_allocator,
             )
         )
         if self._window is not None and self._window.get_visible():
@@ -195,6 +196,7 @@ class NetmgrApp(Adw.Application):
             disable_proxy=self.disable_proxy,
             import_current_proxy=self.import_current_proxy,
             copy_proxy_snippet=self._copy_proxy_snippet,
+            manage_proxy=self.open_proxy_page,
             apply_profile=self.apply_profile,
             clear_profile=self.clear_profile,
             capture_profile=self.capture_profile_prompt,
@@ -239,6 +241,11 @@ class NetmgrApp(Adw.Application):
         self.open_profiles_page()
         if self._window is not None:
             self._window.prompt_capture_profile()
+
+    def open_proxy_page(self) -> None:
+        self.open_window()
+        if self._window is not None:
+            self._window.select_page("proxy")
 
     def open_profiles_page(self) -> None:
         self.open_window()

@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 from gi.repository import Gio, GLib
 
-from .menu_model import ROOT_ID, Menu
+from .menu_model import ROOT_ID, IdAllocator, Menu
 from .status import TrayStatus
 
 log = logging.getLogger(__name__)
@@ -201,7 +201,9 @@ class StatusNotifierItem:
         self._registered_with_watcher = False
 
         self._status = TrayStatus(icon_name="network-offline-symbolic", title=self._title)
-        self._menu = Menu([])
+        #: Dùng chung cho mọi lần dựng menu, để id không đổi.
+        self.id_allocator = IdAllocator()
+        self._menu = Menu([], self.id_allocator)
         self._menu_revision = 1
         #: Layout đã báo cho host lần gần nhất, để phát hiện thay đổi thật sự.
         self._last_layout: tuple | None = None

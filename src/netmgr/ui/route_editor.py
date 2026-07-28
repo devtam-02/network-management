@@ -42,7 +42,10 @@ class RouteEditor(Adw.Dialog):
         self._current_device = current_device
 
         self.set_title("Sửa route" if route else "Thêm route")
-        self.set_content_width(520)
+        # Không đặt chiều cao thì Adw.Dialog co lại vừa nội dung và cắt mất
+        # phần dưới — form này có tới 7 hàng cộng ô nhập nhanh.
+        self.set_content_width(560)
+        self.set_content_height(720)
         self._build(route)
         self._validate()
 

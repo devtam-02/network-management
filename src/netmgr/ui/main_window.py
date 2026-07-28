@@ -230,11 +230,12 @@ class MainWindow(Adw.ApplicationWindow):
         )
         row.add_suffix(button)
 
+        # Nhãn chữ thay vì mũi tên trần: người dùng không đoán được ">" làm gì.
         details = Gtk.Button(
-            icon_name="go-next-symbolic",
+            label="Chi tiết",
             valign=Gtk.Align.CENTER,
             css_classes=["flat"],
-            tooltip_text="Xem chi tiết",
+            tooltip_text="Xem trạng thái, IP, DNS và route đang áp dụng",
         )
         details.connect("clicked", lambda _b, uuid=row_vm.uuid: self.show_detail(uuid))
         row.add_suffix(details)
