@@ -368,3 +368,20 @@ def empty_wifi_hint(snapshot: NetworkSnapshot) -> str | None:
         "Chưa có mạng Wi-Fi nào được lưu. Kết nối lần đầu bằng menu Wi-Fi của hệ "
         "thống, mạng sẽ tự xuất hiện ở đây."
     )
+
+
+def ignore_auto_hint(interface: str, snapshot) -> str:
+    """Giải thích hệ quả của việc bỏ route tự động trên một interface.
+
+    Cờ `ignore-auto-routes` bỏ TẤT CẢ route do DHCP đẩy về, kể cả default route.
+    Trên interface đang là đường ra Internet thì đó là mất mạng — phải nói trước.
+    """
+    from ..domain.routing import default_route_owner
+
+    owner = default_route_owner(snapshot.system_routes)
+    if owner is not None and owner.interface == interface:
+        return (
+            "⚠ Thiết bị này đang là đường ra Internet. Bỏ route tự động sẽ bỏ "
+            "cả default route của nó — hãy tự thêm route mặc định, hoặc tắt mục này."
+        )
+    return "Bỏ route do DHCP đẩy về, để chỉ route bên trên có hiệu lực."

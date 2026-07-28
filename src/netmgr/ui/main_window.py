@@ -88,11 +88,9 @@ class MainWindow(Adw.ApplicationWindow):
         self._sidebar_list.select_row(self._sidebar_list.get_row_at_index(0))
 
     def _wrap_content(self) -> Gtk.Widget:
+        # Không có nút "làm mới": app đã nghe signal của NetworkManager nên mọi
+        # thay đổi tự hiện ra. Một nút không rõ để làm gì chỉ gây phân vân.
         header = Adw.HeaderBar()
-        refresh = Gtk.Button(icon_name="view-refresh-symbolic", tooltip_text="Làm mới")
-        refresh.connect("clicked", lambda _b: self.refresh())
-        header.pack_end(refresh)
-
         toolbar = Adw.ToolbarView(content=self._content_stack)
         toolbar.add_top_bar(header)
         return toolbar
@@ -471,11 +469,18 @@ class MainWindow(Adw.ApplicationWindow):
         elif is_active:
             row.add_prefix(Gtk.Image.new_from_icon_name("emblem-ok-symbolic"))
 
+        # Bộ cấu hình đang dùng vẫn cần áp lại được: sau khi sửa route hoặc khi
+        # mạng bị thay đổi từ bên ngoài, người dùng phải có cách đưa nó về đúng
+        # trạng thái mà không phải chọn bộ khác rồi chọn lại.
         use = Gtk.Button(
-            label="Đang dùng" if is_active else "Áp dụng",
+            label="Áp dụng lại" if is_active else "Áp dụng",
             valign=Gtk.Align.CENTER,
-            sensitive=not busy and not profile.is_broken and not is_active,
-            css_classes=[] if is_active else ["suggested-action"],
+            sensitive=not busy and not profile.is_broken,
+            css_classes=["suggested-action"] if not is_active else [],
+            tooltip_text=(
+                "Áp lại Bộ cấu hình này lên trạng thái mạng hiện tại"
+                if is_active else ""
+            ),
         )
         use.connect("clicked", lambda _b, pid=profile.id: self._controller.apply_profile(pid))
         row.add_suffix(use)

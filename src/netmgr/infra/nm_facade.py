@@ -594,15 +594,24 @@ class NMFacade:
     # của máy.
 
     def apply_runtime_routes(
-        self, interface: str, routes: list[Ipv4Route], callback: OpCallback | None = None
+        self,
+        interface: str,
+        routes: list[Ipv4Route],
+        ignore_auto: bool = True,
+        callback: OpCallback | None = None,
     ) -> None:
-        """Áp danh sách route tĩnh lên thiết bị đang chạy, chỉ ở runtime."""
+        """Áp danh sách route tĩnh lên thiết bị đang chạy, chỉ ở runtime.
+
+        `ignore_auto` bỏ luôn route do DHCP đẩy về. Cần thiết vì nếu không, route
+        của DHCP vẫn nằm đó và tranh với route vừa đặt theo metric.
+        """
 
         def mutate(setting) -> None:
             setting.clear_routes()
             for route in routes:
                 if route.enabled:
                     setting.add_route(_to_nm_route(route))
+            setting.set_property("ignore-auto-routes", ignore_auto)
 
         self._reapply_with(interface, mutate, callback, f"Áp route cho {interface}")
 

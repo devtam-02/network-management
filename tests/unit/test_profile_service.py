@@ -304,9 +304,36 @@ def test_describe_lists_bindings_and_proxy(world):
     )
     text = service.describe(profile)
     assert "LAN Công ty" in text
-    assert "ngắt" in text
+    assert "Tắt wlp2s0" in text
     assert "Wi-Fi tắt" in text
     assert "Proxy: Công ty" in text
+
+
+def test_describe_binding_kieu_cong_tac(world):
+    """Binding công tắc để trống connection_uuid — vẫn phải mô tả được."""
+    service, *_ = world
+    profile = new_profile(
+        "X",
+        bindings=[
+            Binding("enp3s0", BindingAction.ACTIVATE),
+            Binding("wlp2s0", BindingAction.DISCONNECT),
+        ],
+    )
+    assert service.describe(profile) == "Bật enp3s0 · Tắt wlp2s0"
+
+
+def test_describe_dem_route_rieng(world):
+    from netmgr.domain.models import Ipv4Route
+
+    service, *_ = world
+    profile = new_profile(
+        "X",
+        bindings=[
+            Binding("enp3s0", BindingAction.ACTIVATE,
+                    routes=[Ipv4Route("10.0.0.0", 8, next_hop="10.0.0.1")]),
+        ],
+    )
+    assert "1 route riêng" in service.describe(profile)
 
 
 def test_describe_empty_profile(world):

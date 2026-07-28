@@ -632,3 +632,44 @@ def test_rollback_restores_connection_to_its_original_device(world):
     ]
     assert restore_calls, "không khôi phục kết nối Wi-Fi đã ngắt"
     assert network.last_activate_interface == "wlp2s0"
+
+
+# ── bỏ route tự động khi Bộ cấu hình có route riêng ──────────────────────────
+
+
+def _routed_profile(lan_uuid, ignore_auto: bool = True):
+    from netmgr.domain.models import Ipv4Route
+
+    return new_profile(
+        "Có route",
+        bindings=[
+            Binding(
+                "enp3s0",
+                BindingAction.ACTIVATE,
+                lan_uuid,
+                ignore_auto_routes=ignore_auto,
+                routes=[Ipv4Route("10.0.0.0", 8, next_hop="10.207.154.254")],
+            )
+        ],
+    )
+
+
+def test_bo_route_tu_dong_theo_mac_dinh(world):
+    """Route DHCP đẩy về tranh với route của Bộ cấu hình, nên mặc định phải bỏ."""
+    network, proxy, lan, _wifi = world
+    report, _ = run(make_applier(network, proxy), _routed_profile(lan.uuid))
+
+    assert report.ok, report.failure
+    assert ("routes", "enp3s0") in network.calls
+    assert network.last_ignore_auto is True
+
+
+def test_ton_trong_khi_nguoi_dung_tat_bo_route_tu_dong(world):
+    """Tắt được, vì cờ này bỏ luôn default route của DHCP."""
+    network, proxy, lan, _wifi = world
+    report, _ = run(
+        make_applier(network, proxy), _routed_profile(lan.uuid, ignore_auto=False)
+    )
+
+    assert report.ok, report.failure
+    assert network.last_ignore_auto is False

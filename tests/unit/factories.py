@@ -126,8 +126,10 @@ def snapshot(
     wifi_enabled: bool = True,
     wifi_hardware_enabled: bool = True,
     permissions: Permissions | None = None,
+    system_routes=None,
 ) -> NetworkSnapshot:
     return NetworkSnapshot(
+        system_routes=list(system_routes or []),
         devices=list(devices or []),
         connections=list(connections or []),
         networking_enabled=networking_enabled,

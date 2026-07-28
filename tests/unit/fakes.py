@@ -20,6 +20,7 @@ class FakeNetwork:
         #: Route đã áp ở runtime, theo interface.
         self.runtime_routes: dict[str, list] = {}
         self.last_activate_interface: str | None = None
+        self.last_ignore_auto: bool | None = None
 
     def snapshot(self):
         return self._snapshot
@@ -81,8 +82,11 @@ class FakeNetwork:
                 device.state = DeviceState.DISCONNECTED
         callback(OpResult.success())
 
-    def apply_runtime_routes(self, interface: str, routes, callback) -> None:
+    def apply_runtime_routes(
+        self, interface: str, routes, ignore_auto=True, callback=None
+    ) -> None:
         self.calls.append(("routes", interface))
+        self.last_ignore_auto = ignore_auto
         if "routes" in self.fail:
             callback(OpResult(False, self.fail["routes"]))
             return

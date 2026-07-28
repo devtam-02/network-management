@@ -783,3 +783,29 @@ def test_manage_proxy_opens_window(rec):
     assert node.enabled is True
     menu.activate(node.id)
     assert rec.calls == [("manage_proxy", None)]
+
+
+# ── áp dụng lại Bộ cấu hình đang dùng ────────────────────────────────────────
+
+
+def test_co_muc_ap_dung_lai_khi_dang_dung_bo_cau_hinh(rec):
+    """Sửa route xong thì phải áp lại được; bấm lại chính nó trong danh sách
+    radio là thao tác không ai đoán ra."""
+    p = make_profile()
+    menu = profile_menu(rec, FakeProfileService([p], active=p))
+
+    reapply = find(menu, "Áp dụng lại")
+    assert reapply is not None and reapply.enabled
+    menu.activate(reapply.id)
+    assert ("apply", "p1") in rec.calls
+
+
+def test_khong_co_muc_ap_dung_lai_khi_khong_dung_bo_cau_hinh(rec):
+    menu = profile_menu(rec, FakeProfileService([make_profile()], active=None))
+    assert find(menu, "Áp dụng lại") is None
+
+
+def test_muc_ap_dung_lai_bi_khoa_khi_dang_ban(rec):
+    p = make_profile()
+    menu = profile_menu(rec, FakeProfileService([p], active=p, busy=True))
+    assert find(menu, "Áp dụng lại").enabled is False

@@ -435,6 +435,15 @@ class Binding:
     connection_uuid: str | None = None
     owned: bool = False                     # app sở hữu → xoá cùng Bộ cấu hình
     required: bool = False                  # True → thiếu thiết bị là lỗi
+    #: Bỏ qua route do DHCP đẩy về cho thiết bị này.
+    #:
+    #: Mặc định BẬT khi có route riêng: nếu không, route của DHCP và route của
+    #: Bộ cấu hình cùng tồn tại và tranh nhau theo metric — thứ người dùng đặt
+    #: tay chưa chắc thắng.
+    #:
+    #: Cảnh báo: cờ này cũng bỏ luôn default route do DHCP cấp. Với thiết bị
+    #: đang là đường ra Internet thì phải tắt, nếu không sẽ mất mạng.
+    ignore_auto_routes: bool = True
     #: Route tĩnh riêng của Bộ cấu hình cho interface này.
     #:
     #: Route thuộc về Bộ cấu hình chứ KHÔNG thuộc connection của hệ thống: mỗi

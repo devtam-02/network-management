@@ -309,6 +309,15 @@ def _profile_submenu(profiles, actions: MenuActions) -> MenuItem:
     )
 
     children.append(separator())
+    # Áp lại Bộ cấu hình đang dùng. Cần thiết khi vừa sửa route, hoặc khi mạng bị
+    # thay đổi từ bên ngoài — bấm lại chính nó trong danh sách radio ở trên là
+    # thao tác không ai đoán ra.
+    if active is not None:
+        children.append(
+            item(f"🔄 Áp dụng lại '{active.label}'", key="profile:reapply",
+                 enabled=not busy,
+                 action=lambda pid=active.id: actions.apply_profile(pid))
+        )
     if actions.capture_profile is not None:
         children.append(
             item("Lưu trạng thái hiện tại thành Bộ cấu hình…", key="profile:capture",

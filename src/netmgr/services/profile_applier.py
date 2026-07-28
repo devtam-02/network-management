@@ -332,22 +332,24 @@ class ProfileApplier:
             device = self._match_device(binding, snapshot)
             if device is None or device.state is not DeviceState.CONNECTED:
                 continue
-            targets.append((device.interface, list(binding.routes)))
+            targets.append(
+                (device.interface, list(binding.routes), binding.ignore_auto_routes)
+            )
 
         if not targets:
             done(True, skipped=True)
             return
 
         # Nhớ lại để rollback và để "Không dùng Bộ cấu hình" khôi phục được.
-        self._restore.touched_interfaces = [iface for iface, _r in targets]
+        self._restore.touched_interfaces = [iface for iface, _r, _i in targets]
         remaining = list(targets)
 
         def step_one() -> None:
             if not remaining:
                 done(True, f"Đã áp route cho {len(targets)} thiết bị")
                 return
-            iface, routes = remaining.pop(0)
-            self._network.apply_runtime_routes(iface, routes, on_result)
+            iface, routes, ignore_auto = remaining.pop(0)
+            self._network.apply_runtime_routes(iface, routes, ignore_auto, on_result)
 
         def on_result(result) -> None:
             if not result.ok:

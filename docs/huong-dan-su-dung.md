@@ -196,6 +196,26 @@ Ba điều đáng biết:
 
 Bộ cấu hình trỏ tới thứ đã bị xoá sẽ hiện ⚠ và không cho áp dụng.
 
+**Áp dụng lại.** Bộ cấu hình đang dùng có nút **Áp dụng lại** (và mục
+`🔄 Áp dụng lại '<tên>'` trong menu tray). Dùng khi mạng bị thứ khác thay đổi ở
+bên ngoài. Sửa Bộ cấu hình đang dùng rồi bấm **Lưu** thì app **tự áp lại ngay**,
+không cần bấm nút này.
+
+### 5.1.1 Route riêng của Bộ cấu hình
+
+Mục **Route riêng** trong hộp thoại sửa cho phép mỗi Bộ cấu hình có bảng route
+của riêng nó. Chọn route đi qua thiết bị nào, và các route này **chỉ tồn tại
+trong lúc Bộ cấu hình đang bật** — tắt app hoặc chọn *Không dùng Bộ cấu hình* là
+máy trở về đúng cấu hình gốc.
+
+Thiết bị nào có route riêng sẽ hiện thêm công tắc **Bỏ route tự động**, mặc định
+BẬT. Lý do: DHCP thường đẩy về sẵn một số route, chúng tranh với route bạn đặt
+tay theo metric — thứ bạn đặt chưa chắc thắng.
+
+> ⚠ Công tắc này bỏ **tất cả** route do DHCP cấp, kể cả default route. Nếu thiết
+> bị đó đang là đường ra Internet thì app sẽ cảnh báo ngay dưới công tắc — khi ấy
+> hoặc tự thêm route mặc định vào Bộ cấu hình, hoặc tắt công tắc đi.
+
 **Không dùng Bộ cấu hình** đưa app về quản lý thủ công — chọn mục này chỉ bỏ
 đánh dấu, không thay đổi cấu hình mạng đang chạy.
 

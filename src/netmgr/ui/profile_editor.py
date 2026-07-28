@@ -41,6 +41,12 @@ class ProfileEditor(Adw.Dialog):
             for route in binding.routes
         ]
         self._switches: dict[str, Adw.SwitchRow] = {}
+        #: interface -> có bỏ route tự động của DHCP không.
+        self._ignore_auto: dict[str, bool] = {
+            b.device_match: b.ignore_auto_routes
+            for b in self._profile.bindings if b.routes
+        }
+        self._ignore_rows: dict[str, Adw.SwitchRow] = {}
 
         self.set_title("Bộ cấu hình mới" if self._is_new else "Sửa Bộ cấu hình")
         self.set_content_width(560)
@@ -158,6 +164,22 @@ class ProfileEditor(Adw.Dialog):
 
         if not self._routes:
             group.add(Adw.ActionRow(title="Chưa có route riêng nào", sensitive=False))
+
+        # Route của Bộ cấu hình và route DHCP đẩy về sẽ tranh nhau theo metric,
+        # nên mặc định bỏ route tự động trên interface đã có route riêng. Vẫn để
+        # tắt được, vì cờ này bỏ luôn default route (xem `ignore_auto_hint`).
+        self._ignore_rows = {}
+        for iface in dict.fromkeys(i for _r, i in self._routes):
+            device = self._snapshot.device_by_interface(iface)
+            name = vm.device_label(device) if device else iface
+            row = Adw.SwitchRow(
+                title=f"Bỏ route tự động trên {name}",
+                subtitle=vm.ignore_auto_hint(iface, self._snapshot),
+                active=self._ignore_auto.get(iface, True),
+            )
+            row.set_subtitle_lines(3)
+            group.add(row)
+            self._ignore_rows[iface] = row
         return group
 
     def _proxy_group(self) -> Adw.PreferencesGroup:
@@ -229,6 +251,8 @@ class ProfileEditor(Adw.Dialog):
         self._profile.icon = _ICONS[self._icon.get_selected()]
         self._profile.description = self._description.get_text().strip()
         self._profile.proxy_id = self._proxy_choices[self._proxy.get_selected()][0]
+        for iface, row in self._ignore_rows.items():
+            self._ignore_auto[iface] = row.get_active()
         self._profile.bindings = self._collect_bindings()
 
     def _collect_bindings(self) -> list[Binding]:
@@ -250,6 +274,7 @@ class ProfileEditor(Adw.Dialog):
                     device_match=iface,
                     action=BindingAction.ACTIVATE if on else BindingAction.DISCONNECT,
                     connection_uuid=None,   # để NetworkManager tự chọn
+                    ignore_auto_routes=self._ignore_auto.get(iface, True),
                     routes=routes,
                 )
             )
@@ -258,7 +283,11 @@ class ProfileEditor(Adw.Dialog):
         # nếu không người dùng sẽ mất cấu hình chỉ vì rút cáp một lúc.
         for iface, routes in routes_by_iface.items():
             bindings.append(
-                Binding(iface, BindingAction.LEAVE_ALONE, None, routes=routes)
+                Binding(
+                    iface, BindingAction.LEAVE_ALONE, None,
+                    ignore_auto_routes=self._ignore_auto.get(iface, True),
+                    routes=routes,
+                )
             )
         return bindings
 
@@ -269,8 +298,16 @@ class ProfileEditor(Adw.Dialog):
             self._error.set_text(result.message)
             self._error.set_visible(True)
             return
-        self._controller.refresh()
         self.close()
+
+        # Đang dùng chính Bộ cấu hình vừa sửa thì áp lại ngay. Nếu không, người
+        # dùng thấy thay đổi đã lưu nhưng mạng vẫn chạy theo cấu hình cũ.
+        active = self._service.active
+        if active is not None and active.id == self._profile.id:
+            self._window.toast(f"Đang áp lại '{self._profile.name}'…")
+            self._controller.apply_profile(self._profile.id)
+        else:
+            self._controller.refresh()
 
 
 def _new_id() -> str:

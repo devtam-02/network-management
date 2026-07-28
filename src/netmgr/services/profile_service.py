@@ -241,12 +241,32 @@ class ProfileService:
         parts: list[str] = []
         snapshot = self._network.snapshot()
 
+        on: list[str] = []
+        off: list[str] = []
         for binding in profile.bindings:
-            if binding.action is BindingAction.ACTIVATE and binding.connection_uuid:
-                conn = snapshot.connection_by_uuid(binding.connection_uuid)
-                parts.append(f"{binding.device_match} → {conn.display_name if conn else '?'}")
+            if binding.action is BindingAction.ACTIVATE:
+                # Binding kiểu công tắc để trống connection_uuid — NetworkManager
+                # tự chọn. Trước đây nhánh này đòi có uuid nên mọi Bộ cấu hình
+                # đều bị mô tả là "Chưa cấu hình gì".
+                if binding.connection_uuid:
+                    conn = snapshot.connection_by_uuid(binding.connection_uuid)
+                    on.append(
+                        f"{binding.device_match} → "
+                        f"{conn.display_name if conn else '?'}"
+                    )
+                else:
+                    on.append(binding.device_match)
             elif binding.action is BindingAction.DISCONNECT:
-                parts.append(f"{binding.device_match} → ngắt")
+                off.append(binding.device_match)
+
+        if on:
+            parts.append("Bật " + ", ".join(on))
+        if off:
+            parts.append("Tắt " + ", ".join(off))
+
+        route_count = sum(len(b.routes) for b in profile.bindings)
+        if route_count:
+            parts.append(f"{route_count} route riêng")
 
         if profile.wifi_enabled is not None:
             parts.append("Wi-Fi " + ("bật" if profile.wifi_enabled else "tắt"))

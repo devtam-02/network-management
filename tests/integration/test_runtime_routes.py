@@ -93,9 +93,9 @@ def target(facade):
     pump(lambda: bool(done))
 
 
-def apply_routes(facade, interface, routes):
+def apply_routes(facade, interface, routes, ignore_auto=True):
     results = []
-    facade.apply_runtime_routes(interface, routes, results.append)
+    facade.apply_runtime_routes(interface, routes, ignore_auto, results.append)
     assert pump(lambda: bool(results)), "callback không đến"
     return results[0]
 
@@ -129,7 +129,7 @@ def test_disabled_route_not_applied(facade, target):
 
 def test_unknown_interface_fails_cleanly(facade):
     results = []
-    facade.apply_runtime_routes("khong-co-that0", [], results.append)
+    facade.apply_runtime_routes("khong-co-that0", [], True, results.append)
     assert pump(lambda: bool(results))
     assert results[0].ok is False
     assert "Không tìm thấy thiết bị" in results[0].message

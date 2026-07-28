@@ -18,6 +18,7 @@ from netmgr.domain.models import (
 )
 from netmgr.infra.proxy_store import new_config
 from netmgr.ui.view_models import (
+    ignore_auto_hint,
     connection_detail,
     connection_rows,
     empty_wifi_hint,
@@ -433,3 +434,29 @@ def test_device_status_when_idle():
 
     dev = eth_device("enp1s0", state=DeviceState.DISCONNECTED, ip=None)
     assert device_status(dev, snapshot(devices=[dev])) == "Chưa kết nối"
+
+
+# ── cảnh báo khi bỏ route tự động ────────────────────────────────────────────
+
+
+def test_ignore_auto_hint_canh_bao_khi_la_duong_ra_internet():
+    from netmgr.domain.models import Ipv4Route, SystemRoute
+
+    snap = snapshot(system_routes=[
+        SystemRoute("enx1234",
+                    Ipv4Route("0.0.0.0", 0, next_hop="172.20.10.1", metric=100)),
+    ])
+    hint = ignore_auto_hint("enx1234", snap)
+    assert "đường ra Internet" in hint
+
+
+def test_ignore_auto_hint_binh_thuong_khi_khong_giu_default_route():
+    from netmgr.domain.models import Ipv4Route, SystemRoute
+
+    snap = snapshot(system_routes=[
+        SystemRoute("enx1234",
+                    Ipv4Route("0.0.0.0", 0, next_hop="172.20.10.1", metric=100)),
+    ])
+    hint = ignore_auto_hint("enp1s0", snap)
+    assert "đường ra Internet" not in hint
+    assert "DHCP" in hint
