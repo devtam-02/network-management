@@ -229,7 +229,7 @@ def test_captured_profile_reapplies_cleanly(world):
     profile = service.capture_current("Hiện tại")
 
     # Đổi trạng thái đi
-    network.activate_connection(lan.uuid, lambda _r: None)
+    network.activate_connection(lan.uuid, None, lambda _r: None)
     network.deactivate_connection(home.uuid, lambda _r: None)
 
     result = {}

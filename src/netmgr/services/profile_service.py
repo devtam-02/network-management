@@ -70,9 +70,8 @@ class ProfileService:
         for binding in profile.bindings:
             if binding.action is not BindingAction.ACTIVATE:
                 continue
-            if not binding.connection_uuid:
-                return f"'{binding.device_match}' chưa chọn cấu hình kết nối"
-            if snapshot.connection_by_uuid(binding.connection_uuid) is None:
+            if binding.connection_uuid and \
+                    snapshot.connection_by_uuid(binding.connection_uuid) is None:
                 return f"Cấu hình kết nối của '{binding.device_match}' đã bị xoá"
         if profile.touches_proxy and not profile.disables_proxy:
             if self._proxy.get(profile.proxy_id) is None:
@@ -196,10 +195,45 @@ class ProfileService:
 
         self._applier.apply(profile, on_done=finished, on_progress=on_progress)
 
-    def clear_active(self) -> None:
-        """"Không dùng Bộ cấu hình" (FR-PR9) — bỏ đánh dấu, không đổi cấu hình."""
+    def clear_active(self) -> OpResult:
+        """"Không dùng Bộ cấu hình" (FR-PR9) — trả máy về cấu hình gốc.
+
+        Route của Bộ cấu hình chỉ tồn tại ở runtime, nên khôi phục = reapply
+        connection đã lưu. Kết nối nào đang chạy thì vẫn chạy: người dùng chỉ
+        nói "thôi không dùng bối cảnh nữa", không nói "ngắt mạng".
+        """
+        previous = self.active
         self._active_id = None
         self._persist()
+
+        interfaces = self._touched_interfaces(previous)
+        for iface in interfaces:
+            self._network.restore_runtime(iface, lambda _r: None)
+
+        if interfaces:
+            return OpResult.success(
+                f"Đã trả {len(interfaces)} thiết bị về cấu hình gốc của máy"
+            )
+        return OpResult.success("Đã bỏ Bộ cấu hình")
+
+    def restore_all(self) -> None:
+        """Trả mọi thiết bị về cấu hình gốc — gọi khi thoát app."""
+        for iface in self._touched_interfaces(self.active):
+            self._network.restore_runtime(iface, lambda _r: None)
+
+    def _touched_interfaces(self, profile: Profile | None) -> list[str]:
+        """Interface mà Bộ cấu hình này có đụng route vào."""
+        if profile is None:
+            return []
+        snapshot = self._network.snapshot()
+        out: list[str] = []
+        for binding in profile.bindings:
+            if not binding.routes:
+                continue
+            for device in snapshot.devices:
+                if binding.matches(device) and device.interface not in out:
+                    out.append(device.interface)
+        return out
 
     # ── mô tả cho UI ────────────────────────────────────────────────────────
 

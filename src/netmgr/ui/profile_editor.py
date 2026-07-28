@@ -1,7 +1,10 @@
 """Hộp thoại thêm/sửa một Bộ cấu hình (F6).
 
-Mỗi thiết bị mạng là một hàng: chọn hành động (kết nối / ngắt / không đụng tới)
-và cấu hình kết nối tương ứng.
+Cố ý giữ đơn giản: mỗi thiết bị mạng là MỘT công tắc bật/tắt, kèm một dòng cho
+biết nó đang ra sao. Không có ô chọn connection — bật một thiết bị nghĩa là
+"cho nó lên mạng", NetworkManager tự chọn cấu hình phù hợp đúng như khi cắm cáp.
+
+Route nằm ở mục riêng bên dưới, mỗi route chọn đi qua thiết bị nào.
 """
 
 from __future__ import annotations
@@ -12,19 +15,9 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
-from ..domain.models import Binding, BindingAction, Profile
-
-_ACTIONS = [
-    (BindingAction.LEAVE_ALONE, "Không đụng tới"),
-    (BindingAction.ACTIVATE, "Kết nối"),
-    (BindingAction.DISCONNECT, "Ngắt kết nối"),
-]
-
-_WIFI_CHOICES = [
-    (None, "Không đụng tới"),
-    (True, "Bật"),
-    (False, "Tắt"),
-]
+from ..domain.models import Binding, BindingAction, Ipv4Route, Profile
+from . import view_models as vm
+from .route_editor import RouteEditor
 
 _ICONS = ["🌐", "🏢", "🏠", "🏨", "✈️", "🔒", "🧪", "📡"]
 
@@ -38,80 +31,26 @@ class ProfileEditor(Adw.Dialog):
 
         self._is_new = profile is None
         self._profile = profile or Profile(id=_new_id(), name="")
+        self._snapshot = controller.snapshot()
+
+        # Route giữ dạng phẳng (route, interface) — người dùng nhìn thấy một
+        # danh sách route duy nhất, gom lại theo thiết bị khi lưu.
+        self._routes: list[tuple[Ipv4Route, str]] = [
+            (route, binding.device_match)
+            for binding in self._profile.bindings
+            for route in binding.routes
+        ]
+        self._switches: dict[str, Adw.SwitchRow] = {}
+
         self.set_title("Bộ cấu hình mới" if self._is_new else "Sửa Bộ cấu hình")
-        self.set_content_width(600)
-        self.set_content_height(720)
+        self.set_content_width(560)
+        self.set_content_height(680)
         self._build()
 
     # ── dựng ────────────────────────────────────────────────────────────────
 
     def _build(self) -> None:
-        page = Adw.PreferencesPage()
-
-        general = Adw.PreferencesGroup(title="Chung")
-        self._name = Adw.EntryRow(title="Tên", text=self._profile.name)
-        general.add(self._name)
-
-        self._icon = Adw.ComboRow(
-            title="Biểu tượng",
-            model=Gtk.StringList.new(_ICONS),
-            selected=_ICONS.index(self._profile.icon) if self._profile.icon in _ICONS else 0,
-        )
-        general.add(self._icon)
-
-        self._description = Adw.EntryRow(title="Mô tả", text=self._profile.description)
-        general.add(self._description)
-        page.add(general)
-
-        # ── mạng ──
-        snapshot = self._controller.snapshot()
-        network = Adw.PreferencesGroup(
-            title="Mạng",
-            description=(
-                "Thiết bị vắng mặt sẽ được bỏ qua, trừ khi bạn đánh dấu bắt buộc."
-            ),
-        )
-        self._device_rows: dict[str, tuple] = {}
-        for device in snapshot.devices:
-            network.add(self._device_expander(device))
-        if not snapshot.devices:
-            network.add(Adw.ActionRow(title="Không tìm thấy thiết bị mạng", sensitive=False))
-        page.add(network)
-
-        # ── Wi-Fi radio ──
-        if snapshot.has_wifi_hardware:
-            radio_group = Adw.PreferencesGroup(title="Radio Wi-Fi")
-            self._wifi = Adw.ComboRow(
-                title="Khi áp dụng Bộ cấu hình này",
-                model=Gtk.StringList.new([label for _v, label in _WIFI_CHOICES]),
-                selected=next(
-                    i for i, (v, _l) in enumerate(_WIFI_CHOICES)
-                    if v is self._profile.wifi_enabled
-                ),
-            )
-            radio_group.add(self._wifi)
-            page.add(radio_group)
-        else:
-            self._wifi = None
-
-        # ── proxy ──
-        proxy_group = Adw.PreferencesGroup(title="Proxy")
-        self._proxy_choices: list[tuple[str | None, str]] = [
-            (None, "Không đụng tới"),
-            ("", "Tắt proxy"),
-        ]
-        self._proxy_choices += [(c.id, c.name) for c in self._controller.proxy.configs]
-        self._proxy = Adw.ComboRow(
-            title="Cấu hình proxy",
-            model=Gtk.StringList.new([label for _v, label in self._proxy_choices]),
-            selected=next(
-                (i for i, (v, _l) in enumerate(self._proxy_choices)
-                 if v == self._profile.proxy_id),
-                0,
-            ),
-        )
-        proxy_group.add(self._proxy)
-        page.add(proxy_group)
+        self._page_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 
         header = Adw.HeaderBar()
         cancel = Gtk.Button(label="Huỷ")
@@ -124,90 +63,208 @@ class ProfileEditor(Adw.Dialog):
         self._error = Gtk.Label(css_classes=["error", "caption"], visible=False, wrap=True)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         box.append(self._error)
-        box.append(Gtk.ScrolledWindow(child=page, vexpand=True))
+        box.append(Gtk.ScrolledWindow(child=self._page_box, vexpand=True))
 
         toolbar = Adw.ToolbarView(content=box)
         toolbar.add_top_bar(header)
         self.set_child(toolbar)
+        self._rebuild()
 
-    def _device_expander(self, device) -> Adw.ExpanderRow:
-        existing = self._profile.binding_for(device.interface)
-        candidates = self._service.candidate_connections(device.interface)
+    def _rebuild(self) -> None:
+        """Dựng lại nội dung. Giá trị đang gõ được giữ qua `_remember()`."""
+        child = self._page_box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            self._page_box.remove(child)
+            child = nxt
 
-        row = Adw.ExpanderRow(
-            title=device.interface,
-            subtitle="Wi-Fi" if device.type.name == "WIFI" else "Có dây",
+        page = Adw.PreferencesPage()
+        page.add(self._general_group())
+        page.add(self._devices_group())
+        page.add(self._routes_group())
+        page.add(self._proxy_group())
+        self._page_box.append(page)
+
+    def _general_group(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(title="Chung")
+        self._name = Adw.EntryRow(title="Tên", text=self._profile.name)
+        group.add(self._name)
+
+        self._icon = Adw.ComboRow(
+            title="Biểu tượng",
+            model=Gtk.StringList.new(_ICONS),
+            selected=_ICONS.index(self._profile.icon) if self._profile.icon in _ICONS else 0,
         )
+        group.add(self._icon)
 
-        action = Adw.ComboRow(
-            title="Hành động",
-            model=Gtk.StringList.new([label for _a, label in _ACTIONS]),
+        self._description = Adw.EntryRow(title="Mô tả", text=self._profile.description)
+        group.add(self._description)
+        return group
+
+    def _devices_group(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(
+            title="Mạng",
+            description=(
+                "Bật thiết bị nào thì áp dụng Bộ cấu hình sẽ cho nó lên mạng, "
+                "tắt thì ngắt kết nối. Thiết bị vắng mặt được bỏ qua."
+            ),
+        )
+        self._switches = {}
+
+        for device in self._snapshot.devices:
+            existing = self._profile.binding_for(device.interface)
+            row = Adw.SwitchRow(
+                title=f"{vm.device_label(device)}  ·  {device.interface}",
+                subtitle=vm.device_status(device, self._snapshot),
+                active=existing is not None and existing.action is BindingAction.ACTIVATE,
+            )
+            row.set_subtitle_lines(2)
+            group.add(row)
+            self._switches[device.interface] = row
+
+        if not self._snapshot.devices:
+            group.add(Adw.ActionRow(title="Không tìm thấy thiết bị mạng", sensitive=False))
+        return group
+
+    def _routes_group(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(
+            title="Route riêng",
+            description=(
+                "Chỉ áp khi Bộ cấu hình này đang bật. Tắt đi là máy trở về "
+                "cấu hình gốc."
+            ),
+        )
+        add = Gtk.Button(icon_name="list-add-symbolic", css_classes=["flat"],
+                         tooltip_text="Thêm route")
+        add.connect("clicked", lambda _b: self._edit_route(None))
+        group.set_header_suffix(add)
+
+        for index, (route, iface) in enumerate(self._routes):
+            device = self._snapshot.device_by_interface(iface)
+            via = vm.device_label(device) if device else iface
+            row = Adw.ActionRow(title=str(route), subtitle=f"qua {via}  ·  {iface}")
+            row.set_title_selectable(True)
+
+            edit = Gtk.Button(icon_name="document-edit-symbolic", css_classes=["flat"],
+                              valign=Gtk.Align.CENTER, tooltip_text="Sửa")
+            edit.connect("clicked", lambda _b, i=index: self._edit_route(i))
+            row.add_suffix(edit)
+
+            remove = Gtk.Button(icon_name="user-trash-symbolic", css_classes=["flat"],
+                                valign=Gtk.Align.CENTER, tooltip_text="Xoá")
+            remove.connect("clicked", lambda _b, i=index: self._delete_route(i))
+            row.add_suffix(remove)
+            group.add(row)
+
+        if not self._routes:
+            group.add(Adw.ActionRow(title="Chưa có route riêng nào", sensitive=False))
+        return group
+
+    def _proxy_group(self) -> Adw.PreferencesGroup:
+        group = Adw.PreferencesGroup(title="Proxy")
+        self._proxy_choices: list[tuple[str | None, str]] = [
+            (None, "Không đụng tới"),
+            ("", "Tắt proxy"),
+        ]
+        self._proxy_choices += [(c.id, c.name) for c in self._controller.proxy.configs]
+        self._proxy = Adw.ComboRow(
+            title="Khi áp dụng Bộ cấu hình này",
+            model=Gtk.StringList.new([label for _v, label in self._proxy_choices]),
             selected=next(
-                (i for i, (a, _l) in enumerate(_ACTIONS)
-                 if existing is not None and a is existing.action),
+                (i for i, (v, _l) in enumerate(self._proxy_choices)
+                 if v == self._profile.proxy_id),
                 0,
             ),
         )
-        row.add_row(action)
+        group.add(self._proxy)
+        return group
 
-        labels = [c.display_name for c in candidates] or ["(không có cấu hình nào)"]
-        connection = Adw.ComboRow(
-            title="Dùng cấu hình",
-            model=Gtk.StringList.new(labels),
-            selected=next(
-                (i for i, c in enumerate(candidates)
-                 if existing is not None and c.uuid == existing.connection_uuid),
-                0,
-            ),
-            sensitive=bool(candidates),
+    # ── route ───────────────────────────────────────────────────────────────
+
+    def _edit_route(self, index: int | None) -> None:
+        if not self._snapshot.devices:
+            self._window.toast("Không có thiết bị mạng nào để gắn route")
+            return
+
+        current_route, current_iface = (
+            self._routes[index] if index is not None else (None, None)
         )
-        row.add_row(connection)
+        others = [r for i, (r, _d) in enumerate(self._routes) if i != index]
+        choices = [
+            (d.interface, f"{vm.device_label(d)}  ·  {d.interface}")
+            for d in self._snapshot.devices
+        ]
 
-        required = Adw.SwitchRow(
-            title="Bắt buộc",
-            subtitle="Thiếu thiết bị này thì coi là áp dụng thất bại",
-            active=existing.required if existing else False,
-        )
-        row.add_row(required)
+        def on_save(route: Ipv4Route, iface: str) -> None:
+            if index is None:
+                self._routes.append((route, iface))
+            else:
+                self._routes[index] = (route, iface)
+            self._remember()
+            self._rebuild()
 
-        self._device_rows[device.interface] = (action, connection, required, candidates)
-        return row
+        RouteEditor(
+            current_route,
+            existing=others,
+            local_subnets=self._subnets(current_iface),
+            on_save=on_save,
+            devices=choices,
+            current_device=current_iface,
+        ).present(self._window)
+
+    def _delete_route(self, index: int) -> None:
+        del self._routes[index]
+        self._remember()
+        self._rebuild()
+
+    def _subnets(self, iface: str | None):
+        device = self._snapshot.device_by_interface(iface) if iface else None
+        return list(device.ip4_addresses) if device else []
 
     # ── lưu ─────────────────────────────────────────────────────────────────
 
-    def _collect(self) -> Profile:
-        profile = self._profile
-        profile.name = self._name.get_text().strip()
-        profile.icon = _ICONS[self._icon.get_selected()]
-        profile.description = self._description.get_text().strip()
+    def _remember(self) -> None:
+        """Giữ lại giá trị đang gõ trước khi dựng lại giao diện."""
+        self._profile.name = self._name.get_text().strip()
+        self._profile.icon = _ICONS[self._icon.get_selected()]
+        self._profile.description = self._description.get_text().strip()
+        self._profile.proxy_id = self._proxy_choices[self._proxy.get_selected()][0]
+        self._profile.bindings = self._collect_bindings()
+
+    def _collect_bindings(self) -> list[Binding]:
+        routes_by_iface: dict[str, list[Ipv4Route]] = {}
+        for route, iface in self._routes:
+            routes_by_iface.setdefault(iface, []).append(route)
 
         bindings: list[Binding] = []
-        for interface, (action_row, conn_row, req_row, candidates) in self._device_rows.items():
-            action = _ACTIONS[action_row.get_selected()][0]
-            if action is BindingAction.LEAVE_ALONE:
-                continue        # không lưu binding rỗng cho gọn file
-            uuid = None
-            if action is BindingAction.ACTIVATE and candidates:
-                uuid = candidates[conn_row.get_selected()].uuid
+        for iface, switch in self._switches.items():
+            on = switch.get_active()
+            routes = routes_by_iface.pop(iface, [])
+            # Thiết bị chưa từng cấu hình, đang tắt, không có route → bỏ qua cho
+            # file gọn. Nhưng nếu đã từng có binding thì phải giữ, vì tắt là một
+            # lựa chọn có ý nghĩa (ngắt kết nối) chứ không phải "chưa đụng tới".
+            if not on and not routes and self._profile.binding_for(iface) is None:
+                continue
             bindings.append(
                 Binding(
-                    device_match=interface,
-                    action=action,
-                    connection_uuid=uuid,
-                    required=req_row.get_active(),
+                    device_match=iface,
+                    action=BindingAction.ACTIVATE if on else BindingAction.DISCONNECT,
+                    connection_uuid=None,   # để NetworkManager tự chọn
+                    routes=routes,
                 )
             )
-        profile.bindings = bindings
 
-        profile.wifi_enabled = (
-            _WIFI_CHOICES[self._wifi.get_selected()][0] if self._wifi is not None else None
-        )
-        profile.proxy_id = self._proxy_choices[self._proxy.get_selected()][0]
-        return profile
+        # Route trỏ tới thiết bị không còn trong danh sách (tạm rút) vẫn giữ lại,
+        # nếu không người dùng sẽ mất cấu hình chỉ vì rút cáp một lúc.
+        for iface, routes in routes_by_iface.items():
+            bindings.append(
+                Binding(iface, BindingAction.LEAVE_ALONE, None, routes=routes)
+            )
+        return bindings
 
     def _on_save(self) -> None:
-        profile = self._collect()
-        result = self._service.save(profile)
+        self._remember()
+        result = self._service.save(self._profile)
         if not result.ok:
             self._error.set_text(result.message)
             self._error.set_visible(True)

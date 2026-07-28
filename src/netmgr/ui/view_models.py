@@ -64,11 +64,57 @@ class ConnectionRow:
     action_label: str | None
     can_act: bool
     can_delete: bool
+    #: Vì sao không bấm được. UI hiện câu này khi người dùng bấm vào nút bị tắt
+    #: — nút xám không giải thích gì là kiểu UI khó chịu nhất.
+    blocked_reason: str = ""
 
 
 def _device_for(conn: ConnectionProfile, snapshot: NetworkSnapshot) -> DeviceInfo | None:
     iface = conn.device_interface or conn.interface_name
     return snapshot.device_by_interface(iface) if iface else None
+
+
+def device_label(device: DeviceInfo) -> str:
+    """Tên thiết bị theo cách người dùng nhận ra.
+
+    `enx52578a6f8d22` không nói lên điều gì; "USB Ethernet" thì có. Suy từ
+    đường phần cứng: chuỗi chứa "-usb-" nghĩa là cắm qua USB.
+    """
+    bus = "USB" if "-usb-" in device.hw_path else "PCI"
+    kind = "Wi-Fi" if device.type is ConnType.WIFI else "Ethernet"
+    return f"{bus} {kind}"
+
+
+def device_status(device: DeviceInfo, snapshot: NetworkSnapshot) -> str:
+    """Một dòng cho biết thiết bị đang bật không và đang nối mạng nào."""
+    if device.state is DeviceState.UNAVAILABLE:
+        return "Không khả dụng"
+    if not device.is_connected and not device.state.is_busy:
+        return state_text(device.state)
+
+    parts = [state_text(device.state)]
+    if device.active_connection_uuid:
+        conn = snapshot.connection_by_uuid(device.active_connection_uuid)
+        if conn is not None:
+            parts.append(conn.display_name)
+    if device.ip4_addresses:
+        parts.append(str(device.ip4_addresses[0]))
+    return " · ".join(parts)
+
+
+def blocked_reason(conn, device, snapshot) -> str:
+    """Vì sao không thao tác được với connection này. Rỗng = dùng được."""
+    if not snapshot.permissions.can_control_network:
+        return "Không đủ quyền điều khiển mạng (polkit từ chối)"
+    if conn.interface_name and device is None:
+        return f"Thiết bị {conn.interface_name} không có mặt — cắm lại hoặc chọn cấu hình khác"
+    if device is not None and device.state.is_busy:
+        return f"{device.interface} đang chuyển trạng thái, chờ một chút"
+    if device is not None and device.state is DeviceState.UNAVAILABLE:
+        return f"{device.interface} không khả dụng (chưa cắm cáp, hoặc radio đang tắt)"
+    if conn.type is ConnType.WIFI and not snapshot.wifi_enabled:
+        return "Wi-Fi đang tắt — bật Wi-Fi trước"
+    return ""
 
 
 def _connection_subtitle(conn: ConnectionProfile, device: DeviceInfo | None) -> str:
@@ -99,6 +145,7 @@ def connection_rows(snapshot: NetworkSnapshot, conn_type: ConnType) -> list[Conn
     for conn in conns:
         device = _device_for(conn, snapshot)
         busy = device is not None and device.state.is_busy
+        reason = blocked_reason(conn, device, snapshot)
         rows.append(
             ConnectionRow(
                 uuid=conn.uuid,
@@ -113,7 +160,8 @@ def connection_rows(snapshot: NetworkSnapshot, conn_type: ConnType) -> list[Conn
                 busy=busy,
                 action_label="Ngắt" if conn.is_active else "Kết nối",
                 # Đang chuyển trạng thái thì khoá lại, tránh gửi hai lệnh chồng nhau.
-                can_act=can_control and not busy,
+                can_act=not reason,
+                blocked_reason=reason,
                 # Không cho xoá cấu hình đang chạy: người dùng sẽ mất mạng ngay
                 # mà không hiểu vì sao.
                 can_delete=can_edit and not conn.is_active and not busy,
@@ -154,6 +202,7 @@ class ConnectionDetail:
     can_act: bool = False
     can_delete: bool = False
     action_label: str = "Kết nối"
+    blocked_reason: str = ""
 
 
 def _status_rows(device: DeviceInfo | None) -> list[DetailRow]:
@@ -260,7 +309,8 @@ def connection_detail(snapshot: NetworkSnapshot, uuid: str) -> ConnectionDetail 
         ipv4=_ipv4_rows(conn),
         routes=_route_rows(conn, device),
         is_active=conn.is_active,
-        can_act=snapshot.permissions.can_control_network and not busy,
+        can_act=not blocked_reason(conn, device, snapshot),
+        blocked_reason=blocked_reason(conn, device, snapshot),
         can_delete=(
             snapshot.permissions.can_edit_connections and not conn.is_active and not busy
         ),

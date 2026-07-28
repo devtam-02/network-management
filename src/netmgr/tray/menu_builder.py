@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..domain.models import ConnectionProfile, ConnType, DeviceInfo
+from ..domain.models import ConnectionProfile, ConnType, DeviceInfo, DeviceState
 from .menu_model import MenuItem, checkbox, info, item, radio, separator, submenu
 from .status import TrayStatus
 
@@ -59,27 +59,69 @@ def _connection_items(
     *,
     enabled: bool = True,
 ) -> list[MenuItem]:
-    """Radio group cho một nhóm connection. Bấm lại cái đang chọn = ngắt kết nối."""
+    """Một checkbox cho mỗi connection: đang bật hay không.
+
+    Cố tình KHÔNG dùng radio. Radio nghĩa là loại trừ lẫn nhau, nhưng nhiều
+    mạng chạy song song là chuyện bình thường (LAN công ty + điện thoại chia sẻ
+    mạng). Dùng radio sẽ hiện hai mục cùng được chọn — vừa sai ngữ nghĩa, vừa
+    khiến người dùng bấm vào để kết nối thì lại hoá ra ngắt.
+    """
     items: list[MenuItem] = []
     for conn in sorted(connections, key=lambda c: c.display_name.lower()):
         device = _device_for(conn, devices)
         busy = device is not None and device.state.is_busy
 
-        label = conn.display_name
+        label = _connection_label(conn, device)
         if busy:
             label += " — đang xử lý…"
 
         items.append(
-            radio(
+            checkbox(
                 label,
-                selected=conn.is_active,
+                checked=conn.is_active,
                 # Device đang chuyển trạng thái thì khoá lại, nếu không hai lần
                 # bấm liên tiếp sẽ gửi hai lệnh chồng nhau.
-                enabled=enabled and not busy,
+                enabled=enabled and not busy and _is_usable(conn, device),
                 action=_toggle_action(conn, actions),
+                description=_connection_hint(conn, device),
             )
         )
     return items
+
+
+def _connection_label(conn: ConnectionProfile, device: DeviceInfo | None) -> str:
+    """Kèm tên interface khi cần phân biệt.
+
+    Hai profile mạng dây rất dễ trùng tên (NetworkManager tự đặt "Wired
+    connection 1", "Wired connection 2"), nên nhãn trần không đủ để biết cái nào
+    là cổng nào.
+    """
+    iface = (conn.device_interface or conn.interface_name or "").strip()
+    if not iface:
+        return conn.display_name
+    if iface in conn.display_name:
+        return conn.display_name
+    return f"{conn.display_name}  ({iface})"
+
+
+def _is_usable(conn: ConnectionProfile, device: DeviceInfo | None) -> bool:
+    """Connection có bấm được không.
+
+    Profile ghim vào một interface không có mặt (dock đã rút, USB đã tháo) thì
+    kích hoạt chắc chắn thất bại — khoá lại còn hơn để người dùng bấm rồi nhận
+    thông báo lỗi.
+    """
+    if conn.interface_name and device is None:
+        return False
+    return device is None or device.state is not DeviceState.UNAVAILABLE
+
+
+def _connection_hint(conn: ConnectionProfile, device: DeviceInfo | None) -> str:
+    if conn.interface_name and device is None:
+        return f"Không tìm thấy thiết bị {conn.interface_name}"
+    if device is not None and device.state is DeviceState.UNAVAILABLE:
+        return f"{device.interface} không khả dụng"
+    return ""
 
 
 def _toggle_action(conn: ConnectionProfile, actions: MenuActions) -> Callable[[], None]:
@@ -89,7 +131,21 @@ def _toggle_action(conn: ConnectionProfile, actions: MenuActions) -> Callable[[]
     return lambda: actions.activate_connection(uuid)
 
 
-def _wifi_submenu(snapshot, actions: MenuActions) -> MenuItem:
+def _wifi_submenu(snapshot, actions: MenuActions) -> MenuItem | None:
+    """Submenu Wi-Fi, hoặc None nếu không có gì đáng hiện.
+
+    Adapter đang `unavailable` (đã rút USB, bị rfkill cứng) mà vẫn hiện submenu
+    kèm công tắc thì chỉ làm rối: công tắc không có tác dụng và danh sách mạng
+    thì trống.
+    """
+    devices = snapshot.wifi_devices
+    usable = [d for d in devices if d.state is not DeviceState.UNAVAILABLE]
+
+    if devices and not usable and not snapshot.wifi_enabled:
+        # Adapter đã rút hoặc bị rfkill: không hiện gì cả. Một dòng "không khả
+        # dụng" chỉ chiếm chỗ trong menu mà không cho người dùng làm được gì.
+        return None
+
     children: list[MenuItem] = [
         checkbox(
             "Bật Wi-Fi",
@@ -279,7 +335,9 @@ def build_menu(
     # ── kết nối ─────────────────────────────────────────────────────────────
     items.append(separator())
     if snapshot.has_wifi_hardware:
-        items.append(_wifi_submenu(snapshot, actions))
+        wifi = _wifi_submenu(snapshot, actions)
+        if wifi is not None:
+            items.append(wifi)
     wired = _wired_submenu(snapshot, actions)
     if wired is not None:
         items.append(wired)
@@ -288,12 +346,9 @@ def build_menu(
     items.append(separator())
     items.append(_proxy_submenu(proxy, actions))
 
+    # Không có mục "Cài đặt…": mở cửa sổ bằng cách bấm app trong menu ứng dụng,
+    # gõ `netmgr`, hoặc click chuột giữa vào icon tray.
     items.append(separator())
-    if actions.open_main_window is not None:
-        items.append(item("Cài đặt…", action=actions.open_main_window))
-    else:
-        items.append(item("Cài đặt…" + TODO_SUFFIX, enabled=False))
-
     if not snapshot.permissions.can_edit_connections:
         items.append(info("Không đủ quyền để sửa cấu hình mạng"))
 

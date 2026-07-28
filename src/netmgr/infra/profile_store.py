@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..domain.models import Binding, BindingAction, Profile
+from ..domain.validators import format_route_line, parse_route_line
 from .proxy_store import default_config_dir
 from .toml_writer import dumps
 
@@ -36,6 +37,10 @@ def binding_to_dict(binding: Binding) -> dict:
     }
     if binding.connection_uuid:
         data["connection_uuid"] = binding.connection_uuid
+    if binding.routes:
+        # Lưu dạng một dòng cho dễ đọc và sửa tay:
+        #   "10.0.0.0/8 via 10.207.154.254 metric 100"
+        data["routes"] = [format_route_line(r) for r in binding.routes if r.enabled]
     return data
 
 
@@ -46,12 +51,19 @@ def binding_from_dict(data: dict) -> Binding:
         # Giá trị lạ (file sửa tay, hoặc schema tương lai) → chọn cái an toàn
         # nhất: không đụng vào thiết bị.
         action = BindingAction.LEAVE_ALONE
+    routes = []
+    for line in data.get("routes", []):
+        route, _error = parse_route_line(str(line))
+        if route is not None:
+            routes.append(route)
+
     return Binding(
         device_match=str(data.get("device_match", "")),
         action=action,
         connection_uuid=data.get("connection_uuid") or None,
         owned=bool(data.get("owned", False)),
         required=bool(data.get("required", False)),
+        routes=routes,
     )
 
 

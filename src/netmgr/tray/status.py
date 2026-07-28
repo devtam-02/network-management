@@ -149,11 +149,11 @@ def compute_status(
         lines.append(f"Proxy: {proxy_summary}")
 
     if profile_label:
-        lines.insert(
-            0,
-            f"Bộ cấu hình: {profile_label}" + (" (đã chỉnh sửa)" if profile_drifted else ""),
-        )
+        # KHÔNG thêm dòng "Bộ cấu hình: X" vào đây: submenu ngay bên dưới đã mang
+        # đúng nhãn đó rồi, thêm nữa là lặp hai lần trong cùng một menu ngắn.
         status.attention = profile_drifted
+        if profile_drifted:
+            lines.append(f"Bộ cấu hình đã bị chỉnh sửa ngoài app")
 
     status.status_lines = lines
     status.accessible_desc = status.title

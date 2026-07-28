@@ -23,6 +23,7 @@ quản lý proxy, kết nối có dây/Wi-Fi, và route tĩnh IPv4.
 | P3 | Cửa sổ cấu hình GTK4: kết nối, chi tiết, proxy CRUD, chẩn đoán | ✅ Xong |
 | P4 | Route IPv4 CRUD + chuyển Automatic/Manual | ✅ Xong — **chức năng lõi F1–F5 đủ** |
 | P5 | Bộ cấu hình: CRUD, chụp trạng thái, áp dụng có rollback | ✅ Xong |
+| — | **Mạng nhiều đường**: trang Định tuyến, split-DNS, policy routing | ✅ Xong |
 | P6 | Bộ cấu hình nâng cao: dry-run, phát hiện lệch, import/export | ⬜ Tiếp theo |
 | P7 | Đóng gói `.deb` | ⬜ |
 

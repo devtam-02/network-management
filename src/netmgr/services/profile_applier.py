@@ -43,6 +43,7 @@ STEP_DEFS = [
     ("deactivate", "Ngắt các kết nối không cần"),
     ("activate", "Kích hoạt kết nối"),
     ("verify", "Kiểm tra kết quả"),
+    ("routes", "Áp route của Bộ cấu hình"),
     ("radio_off", "Tắt Wi-Fi"),
 ]
 
@@ -51,10 +52,13 @@ STEP_DEFS = [
 class _Restore:
     """Trạng thái cần khôi phục nếu áp dụng thất bại."""
 
-    active_uuids: list[str] = field(default_factory=list)
+    #: (uuid, interface) — phải nhớ cả thiết bị, xem `_rollback`.
+    active_uuids: list[tuple[str, str | None]] = field(default_factory=list)
     wifi_enabled: bool | None = None
     proxy_id: str | None = None
     proxy_was_enabled: bool = False
+    #: Interface đã bị áp route runtime — cần trả về cấu hình gốc khi rollback.
+    touched_interfaces: list[str] = field(default_factory=list)
 
 
 class ProfileApplier:
@@ -172,10 +176,10 @@ class ProfileApplier:
                 continue        # không bắt buộc → bỏ qua, không phải lỗi
 
             if binding.action is BindingAction.ACTIVATE:
-                if not binding.connection_uuid:
-                    done(False, f"'{binding.device_match}' chưa chọn cấu hình kết nối")
-                    return
-                if snapshot.connection_by_uuid(binding.connection_uuid) is None:
+                # Không bắt buộc chọn connection: để trống nghĩa là "bật thiết
+                # bị này lên", NetworkManager tự chọn cấu hình phù hợp.
+                if binding.connection_uuid and \
+                        snapshot.connection_by_uuid(binding.connection_uuid) is None:
                     done(False, f"Cấu hình kết nối của '{binding.device_match}' "
                                 "không còn tồn tại")
                     return
@@ -188,7 +192,9 @@ class ProfileApplier:
 
     def _step_snapshot(self, done) -> None:
         snapshot = self._network.snapshot()
-        self._restore.active_uuids = [c.uuid for c in snapshot.connections if c.is_active]
+        self._restore.active_uuids = [
+            (c.uuid, c.device_interface) for c in snapshot.connections if c.is_active
+        ]
         self._restore.wifi_enabled = snapshot.wifi_enabled
         active_proxy = self._proxy.active
         self._restore.proxy_id = active_proxy.id if active_proxy else None
@@ -239,8 +245,10 @@ class ProfileApplier:
 
     def _step_activate(self, done) -> None:
         snapshot = self._network.snapshot()
-        self._pending_activation: list[str] = []
-        to_activate: list[str] = []
+        # Theo dõi theo INTERFACE chứ không theo uuid: Bộ cấu hình giờ chỉ nói
+        # "bật thiết bị này", connection để NetworkManager tự chọn.
+        self._pending_interfaces: list[str] = []
+        to_activate: list[tuple[str | None, str]] = []
         already_ok = 0
 
         for binding in self._profile.bindings:
@@ -250,17 +258,23 @@ class ProfileApplier:
             if device is None:
                 continue        # đã kiểm ở bước validate: không bắt buộc
 
-            self._pending_activation.append(binding.connection_uuid)
-            if (
-                device.active_connection_uuid == binding.connection_uuid
-                and device.state is DeviceState.CONNECTED
-            ):
+            self._pending_interfaces.append(device.interface)
+            already = (
+                device.state is DeviceState.CONNECTED
+                and (
+                    binding.connection_uuid is None
+                    or device.active_connection_uuid == binding.connection_uuid
+                )
+            )
+            if already:
                 # Đã đúng rồi thì ĐỪNG activate lại: NM sẽ kết nối lại và làm
                 # rớt mạng một nhịp hoàn toàn không cần thiết. Rất hay gặp khi
                 # áp dụng lại chính Bộ cấu hình đang chạy.
                 already_ok += 1
                 continue
-            to_activate.append(binding.connection_uuid)
+            # Kèm interface: Bộ cấu hình đã chỉ rõ thiết bị nào, không để NM
+            # tự chọn rồi giữ nguyên connection ở chỗ cũ.
+            to_activate.append((binding.connection_uuid, device.interface))
 
         if not to_activate:
             detail = f"{already_ok} kết nối đã đúng sẵn" if already_ok else ""
@@ -270,32 +284,30 @@ class ProfileApplier:
         suffix = f" ({already_ok} đã đúng sẵn)" if already_ok else ""
         self._chain(
             to_activate,
-            lambda uuid, cb: self._network.activate_connection(uuid, cb),
+            lambda pair, cb: self._network.activate_connection(pair[0], pair[1], cb),
             done,
             f"Đã yêu cầu kích hoạt {len(to_activate)} kết nối{suffix}",
         )
 
     def _step_verify(self, done) -> None:
-        """Chờ tới khi các connection thực sự lên ACTIVATED.
+        """Chờ tới khi các thiết bị thực sự lên CONNECTED.
 
         `activate_connection` trả về khi NM *nhận* yêu cầu, chưa phải khi kết nối
-        xong — không chờ ở đây thì bước sau chạy trên trạng thái nửa vời.
+        xong. Không chờ ở đây thì bước áp route chạy lúc thiết bị còn CONNECTING
+        và bị bỏ qua âm thầm — báo thành công nhưng route không được áp.
         """
-        wanted = getattr(self, "_pending_activation", [])
+        wanted = getattr(self, "_pending_interfaces", [])
         if not wanted:
             done(True, skipped=True)
             return
 
         def connected() -> bool:
             snapshot = self._network.snapshot()
-            for uuid in wanted:
-                conn = snapshot.connection_by_uuid(uuid)
-                if conn is None or not conn.is_active:
-                    return False
-                device = snapshot.device_by_interface(
-                    conn.device_interface or conn.interface_name or ""
-                )
-                if device is not None and device.state is not DeviceState.CONNECTED:
+            for iface in wanted:
+                device = snapshot.device_by_interface(iface)
+                if device is None:
+                    continue        # thiết bị đã rút: bước validate đã cho qua
+                if device.state is not DeviceState.CONNECTED:
                     return False
             return True
 
@@ -304,6 +316,46 @@ class ProfileApplier:
             on_ready=lambda: done(True, f"{len(wanted)} kết nối đã sẵn sàng"),
             on_timeout=lambda: done(False, "Hết thời gian chờ kết nối"),
         )
+
+    def _step_routes(self, done) -> None:
+        """Áp route riêng của Bộ cấu hình — CHỈ ở runtime.
+
+        App không bao giờ ghi vào cấu hình đã lưu của máy. Route sống trong Bộ
+        cấu hình và được `reapply` lên thiết bị đang chạy, nên tắt Bộ cấu hình
+        hoặc thoát app là máy trở về đúng cấu hình gốc.
+        """
+        snapshot = self._network.snapshot()
+        targets: list[tuple[str, list]] = []
+        for binding in self._profile.bindings:
+            if not binding.routes:
+                continue
+            device = self._match_device(binding, snapshot)
+            if device is None or device.state is not DeviceState.CONNECTED:
+                continue
+            targets.append((device.interface, list(binding.routes)))
+
+        if not targets:
+            done(True, skipped=True)
+            return
+
+        # Nhớ lại để rollback và để "Không dùng Bộ cấu hình" khôi phục được.
+        self._restore.touched_interfaces = [iface for iface, _r in targets]
+        remaining = list(targets)
+
+        def step_one() -> None:
+            if not remaining:
+                done(True, f"Đã áp route cho {len(targets)} thiết bị")
+                return
+            iface, routes = remaining.pop(0)
+            self._network.apply_runtime_routes(iface, routes, on_result)
+
+        def on_result(result) -> None:
+            if not result.ok:
+                done(False, result.message)
+                return
+            step_one()
+
+        step_one()
 
     def _step_radio_off(self, done) -> None:
         # Tắt CUỐI CÙNG: tắt sớm sẽ cắt mất kết nối Wi-Fi đang cần dùng ở các
@@ -331,6 +383,11 @@ class ProfileApplier:
                 step.status = StepStatus.ROLLED_BACK
         self._emit()
 
+        # Trả cấu hình runtime về đúng bản đã lưu của máy trước tiên: đây là
+        # thứ ảnh hưởng trực tiếp tới đường đi của gói tin.
+        for iface in self._restore.touched_interfaces:
+            self._network.restore_runtime(iface, lambda _r: None)
+
         if self._restore.proxy_was_enabled and self._restore.proxy_id:
             self._proxy.activate(self._restore.proxy_id)
         elif self._proxy.is_enabled:
@@ -341,9 +398,13 @@ class ProfileApplier:
                 self._network.set_wifi_enabled(self._restore.wifi_enabled, lambda _r: None)
 
         current = {c.uuid for c in self._network.snapshot().connections if c.is_active}
-        for uuid in self._restore.active_uuids:
-            if uuid not in current:
-                self._network.activate_connection(uuid, lambda _r: None)
+        for uuid, iface in self._restore.active_uuids:
+            if uuid in current:
+                continue
+            # Phải nêu rõ interface. Một profile không ghim `interface-name`
+            # (rất phổ biến với cổng USB) mà khôi phục với device=None sẽ bị NM
+            # gán sang cổng khác — rollback lại đá văng đúng thiết bị vừa lên.
+            self._network.activate_connection(uuid, iface, lambda _r: None)
 
         self._finish()
 
@@ -353,16 +414,15 @@ class ProfileApplier:
     def _match_device(binding, snapshot):
         return next((d for d in snapshot.devices if binding.matches(d)), None)
 
-    def _chain(self, uuids: list[str], operation, done, success_detail: str) -> None:
-        """Chạy `operation` lần lượt cho từng uuid; dừng ngay khi có lỗi."""
-        remaining = list(uuids)
+    def _chain(self, items: list, operation, done, success_detail: str) -> None:
+        """Chạy `operation` lần lượt cho từng phần tử; dừng ngay khi có lỗi."""
+        remaining = list(items)
 
         def step_one() -> None:
             if not remaining:
                 done(True, success_detail)
                 return
-            uuid = remaining.pop(0)
-            operation(uuid, on_result)
+            operation(remaining.pop(0), on_result)
 
         def on_result(result) -> None:
             if not result.ok:

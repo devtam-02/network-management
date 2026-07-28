@@ -28,6 +28,7 @@ class MainWindow(Adw.ApplicationWindow):
     PAGES = (
         ("profiles", "Bộ cấu hình", "view-list-bullet-symbolic"),
         ("connections", "Kết nối", "network-workgroup-symbolic"),
+        ("routing", "Định tuyến", "network-transmit-receive-symbolic"),
         ("proxy", "Proxy", "preferences-system-network-symbolic"),
         ("diagnostics", "Chẩn đoán", "dialog-information-symbolic"),
     )
@@ -48,6 +49,8 @@ class MainWindow(Adw.ApplicationWindow):
         self._current = "profiles"
         #: Báo cáo tiến trình khi đang áp dụng Bộ cấu hình; None = không chạy.
         self._apply_report = None
+        self._lookup_query = ""
+        self._lookup_result = None
         self._content_stack = Gtk.Stack(
             transition_type=Gtk.StackTransitionType.CROSSFADE
         )
@@ -126,6 +129,7 @@ class MainWindow(Adw.ApplicationWindow):
         builder = {
             "profiles": self._build_profiles_page,
             "connections": self._build_connections_page,
+            "routing": self._build_routing_page,
             "proxy": self._build_proxy_page,
             "diagnostics": self._build_diagnostics_page,
         }[self._current]
@@ -263,7 +267,7 @@ class MainWindow(Adw.ApplicationWindow):
         dialog.connect(
             "response",
             lambda _d, response: (
-                self._controller.delete_connection(detail.uuid)
+                None    # xoá connection đã bỏ: app không sửa cấu hình máy
                 if response == "delete"
                 else None
             ),
@@ -580,6 +584,116 @@ class MainWindow(Adw.ApplicationWindow):
             if page_key == key:
                 self._sidebar_list.select_row(self._sidebar_list.get_row_at_index(index))
                 return
+
+    # ── trang Định tuyến ────────────────────────────────────────────────────
+
+    def _build_routing_page(self, snapshot) -> Gtk.Widget:
+        from ..domain import routing
+
+        page = Adw.PreferencesPage()
+        routes = snapshot.system_routes
+        rules = snapshot.routing_rules
+
+        # ── tra cứu ──
+        lookup_group = Adw.PreferencesGroup(
+            title="Địa chỉ này đi đường nào?",
+            description=(
+                "Mô phỏng đúng cách kernel chọn route, kể cả luật định tuyến do "
+                "phần mềm khác cài."
+            ),
+        )
+        entry = Adw.EntryRow(title="Địa chỉ IPv4", text=self._lookup_query)
+        entry.set_show_apply_button(True)
+        entry.connect("apply", lambda row: self._do_lookup(row.get_text()))
+        lookup_group.add(entry)
+
+        if self._lookup_result is not None:
+            result = self._lookup_result
+            row = Adw.ActionRow(
+                title=result.interface or "Không tới được",
+                subtitle=result.explain(),
+            )
+            row.set_subtitle_lines(3)
+            row.add_prefix(
+                Gtk.Image.new_from_icon_name(
+                    "emblem-ok-symbolic" if result.found else "dialog-warning-symbolic"
+                )
+            )
+            lookup_group.add(row)
+            for other in result.also_matched:
+                lookup_group.add(
+                    Adw.ActionRow(
+                        title=str(other), subtitle="cũng khớp nhưng kém ưu tiên hơn",
+                        sensitive=False,
+                    )
+                )
+        page.add(lookup_group)
+
+        # ── nhận xét ──
+        issues = routing.analyze(routes, rules)
+        if issues:
+            group = Adw.PreferencesGroup(title="Nhận xét")
+            for issue in issues:
+                row = Adw.ActionRow(title=issue.title, subtitle=issue.detail)
+                row.set_subtitle_lines(3)
+                row.add_prefix(
+                    Gtk.Image.new_from_icon_name(
+                        "dialog-warning-symbolic"
+                        if issue.level is routing.IssueLevel.WARNING
+                        else "dialog-information-symbolic"
+                    )
+                )
+                group.add(row)
+            page.add(group)
+
+        # ── bảng route theo interface ──
+        for group_vm in routing.group_by_interface(routes):
+            group = Adw.PreferencesGroup(title=group_vm.interface)
+            for entry_vm in group_vm.routes:
+                r = entry_vm.route
+                bits = []
+                if r.table not in (None, 0, 254):
+                    bits.append(f"bảng {r.table}")
+                if r.metric is not None:
+                    bits.append(f"metric {r.metric}")
+                row = Adw.ActionRow(title=str(r), subtitle=" · ".join(bits))
+                row.set_title_selectable(True)
+                group.add(row)
+            page.add(group)
+
+        if not routes:
+            page.add(self._placeholder("Không đọc được bảng định tuyến"))
+
+        # ── ip rule ──
+        if rules:
+            group = Adw.PreferencesGroup(
+                title="Luật định tuyến của hệ thống (ip rule)",
+                description=(
+                    "Quyết định bảng nào được tra trước. Gồm cả luật do phần mềm "
+                    "khác cài — NetworkManager không quản lý những luật đó."
+                ),
+            )
+            for rule in rules:
+                row = Adw.ActionRow(title=str(rule))
+                row.set_title_selectable(True)
+                if not rule.matches_plain_traffic:
+                    row.set_subtitle("không áp cho traffic thông thường")
+                group.add(row)
+            page.add(group)
+        return self._scrolled(page)
+
+    def _do_lookup(self, text: str) -> None:
+        from ..domain import routing
+
+        snapshot = self._controller.snapshot()
+        self._lookup_query = text.strip()
+        self._lookup_result = (
+            routing.lookup(snapshot.system_routes, self._lookup_query,
+                           snapshot.routing_rules)
+            if self._lookup_query
+            else None
+        )
+        self.refresh()
 
     # ── trang Chẩn đoán ─────────────────────────────────────────────────────
 

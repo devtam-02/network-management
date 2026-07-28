@@ -176,7 +176,9 @@ def test_set_wifi_enabled_to_current_value_succeeds(facade, snap):
 def test_activate_unknown_uuid_fails_cleanly(facade):
     """Lỗi phải thành OpResult, không được ném GLib.Error ra ngoài facade."""
     results = []
-    facade.activate_connection("00000000-0000-0000-0000-000000000000", results.append)
+    facade.activate_connection(
+        "00000000-0000-0000-0000-000000000000", None, results.append
+    )
 
     assert len(results) == 1
     assert results[0].ok is False
@@ -196,31 +198,3 @@ def test_write_ops_tolerate_missing_callback(facade, snap):
     """Không truyền callback thì cũng không được nổ."""
     facade.set_wifi_enabled(snap.wifi_enabled)
     facade.deactivate_connection("00000000-0000-0000-0000-000000000000")
-
-
-def test_delete_unknown_uuid_fails_cleanly(facade):
-    results = []
-    facade.delete_connection("00000000-0000-0000-0000-000000000000", results.append)
-
-    assert len(results) == 1
-    assert results[0].ok is False
-    assert "Không tìm thấy" in results[0].message
-
-
-def test_delete_refuses_active_connection(facade, snap):
-    """Chặn ở facade chứ không chỉ ở UI: xoá profile đang chạy sẽ ngắt mạng ngay.
-
-    Test này KHÔNG xoá gì — nó chứng minh thao tác bị từ chối.
-    """
-    active = next((c for c in snap.connections if c.is_active), None)
-    if active is None:
-        pytest.skip("Máy không có connection nào đang active")
-
-    results = []
-    facade.delete_connection(active.uuid, results.append)
-
-    assert len(results) == 1
-    assert results[0].ok is False
-    assert "đang được sử dụng" in results[0].message
-    # Xác nhận không có gì bị xoá
-    assert facade.snapshot().connection_by_uuid(active.uuid) is not None

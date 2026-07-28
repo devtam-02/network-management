@@ -159,7 +159,7 @@ def test_wifi_connections_sorted_by_name(rec):
         connections=[wifi_conn("Zulu"), wifi_conn("Alpha")],
     )
     menu = make_menu(snap, rec)
-    names = [n.label for n in menu if n.label in ("Alpha", "Zulu")]
+    names = [n.label.split("  (")[0] for n in menu if n.label.startswith(("Alpha", "Zulu"))]
     assert names == ["Alpha", "Zulu"]
 
 
@@ -186,14 +186,78 @@ def test_active_connection_is_selected(rec):
     assert find(menu, "Khác").toggle_state is False
 
 
-def test_exactly_one_selected_per_group(rec):
+def test_only_active_connections_are_checked(rec):
     snap = snapshot(
         devices=[wifi_device()],
         connections=[wifi_conn("A", active=True), wifi_conn("B"), wifi_conn("C")],
     )
     menu = make_menu(snap, rec)
-    selected = [n for n in menu if n.toggle_type is ToggleType.RADIO and n.toggle_state]
-    assert len(selected) == 1
+    # Bỏ công tắc radio Wi-Fi — nó cũng là checkbox nhưng không phải connection.
+    checked = [
+        n
+        for n in menu
+        if n.toggle_type is ToggleType.CHECKMARK
+        and n.toggle_state
+        and n.label != "Bật Wi-Fi"
+    ]
+    assert [n.label.split("  (")[0] for n in checked] == ["A"]
+
+
+def test_connections_use_checkbox_not_radio(rec):
+    """Nhiều mạng chạy song song là bình thường — radio ngụ ý loại trừ nhau."""
+    snap = snapshot(devices=[wifi_device()], connections=[wifi_conn("A")])
+    menu = make_menu(snap, rec)
+    node = find(menu, "A  (wlp2s0)")
+    assert node.toggle_type is ToggleType.CHECKMARK
+
+
+def test_two_wired_can_both_be_active(rec):
+    """Lỗi thật: LAN công ty + iPhone chia sẻ mạng cùng chạy, radio hiện hai
+    mục cùng chọn và bấm vào lại thành ngắt."""
+    eth_a = eth_device("enp1s0")
+    eth_b = eth_device("enx52578a6f8d22", ip="172.20.10.2")
+    snap = snapshot(
+        devices=[eth_a, eth_b],
+        connections=[
+            eth_conn("netplan-enp1s0", active=True, interface="enp1s0"),
+            eth_conn("Wired connection 1", active=True, interface="enx52578a6f8d22"),
+        ],
+    )
+    menu = make_menu(snap, rec)
+    checked = [
+        n for n in menu if n.toggle_type is ToggleType.CHECKMARK and n.toggle_state
+    ]
+    assert len(checked) == 2
+    assert all(n.toggle_type is ToggleType.CHECKMARK for n in checked)
+
+
+def test_label_includes_interface_to_disambiguate(rec):
+    """NetworkManager tự đặt tên trùng nhau cho nhiều cổng mạng dây."""
+    snap = snapshot(
+        devices=[eth_device("enp1s0"), eth_device("enx52578a6f8d22")],
+        connections=[
+            eth_conn("Wired connection 1", interface="enp1s0"),
+            eth_conn("Wired connection 1", interface="enx52578a6f8d22"),
+        ],
+    )
+    menu = make_menu(snap, rec)
+    labels_found = [n.label for n in menu if "Wired connection 1" in n.label]
+    assert len(labels_found) == 2
+    assert len(set(labels_found)) == 2, "hai mục vẫn trùng nhãn"
+    assert any("enp1s0" in l for l in labels_found)
+    assert any("enx52578a6f8d22" in l for l in labels_found)
+
+
+def test_connection_without_device_is_disabled(rec):
+    """Profile ghim vào cổng đã rút thì kích hoạt chắc chắn thất bại."""
+    snap = snapshot(
+        devices=[eth_device("enp1s0")],
+        connections=[eth_conn("Dock LAN", interface="enx-đã-rút")],
+    )
+    menu = make_menu(snap, rec)
+    node = find(menu, "Dock LAN")
+    assert node.enabled is False
+    assert "Không tìm thấy thiết bị" in node.description
 
 
 def test_clicking_inactive_connection_activates_it(rec):
@@ -217,8 +281,8 @@ def test_each_item_carries_its_own_uuid(rec):
     a, b = wifi_conn("Mạng A"), wifi_conn("Mạng B")
     snap = snapshot(devices=[wifi_device()], connections=[a, b])
     menu = make_menu(snap, rec)
-    menu.activate(find_exact(menu, "Mạng A").id)
-    menu.activate(find_exact(menu, "Mạng B").id)
+    menu.activate(find(menu, "Mạng A  (").id)
+    menu.activate(find(menu, "Mạng B  (").id)
     assert rec.calls == [("activate", a.uuid), ("activate", b.uuid)]
 
 
@@ -623,12 +687,24 @@ def test_profile_submenu_comes_before_connections(rec):
     assert order.index("Bộ cấu hình: Không dùng") < order.index("Wi-Fi")
 
 
-def test_settings_enabled_when_window_action_provided(rec):
-    actions = rec.actions()
-    actions.open_main_window = lambda: rec.calls.append(("window", None))
-    snap = snapshot()
-    menu = Menu(build_menu(snap, compute_status(snap), actions))
-    node = find(menu, "Cài đặt")
-    assert node.enabled is True
-    menu.activate(node.id)
-    assert rec.calls == [("window", None)]
+def test_no_settings_item_in_tray(rec):
+    """Mở cửa sổ bằng app trong menu ứng dụng hoặc click chuột giữa — mục
+    "Cài đặt…" trong tray chỉ làm menu dài thêm."""
+    menu = make_menu(snapshot(), rec)
+    assert find(menu, "Cài đặt") is None
+
+
+def test_no_wifi_submenu_when_adapter_unavailable(rec):
+    """Adapter đã rút: đừng chiếm chỗ bằng submenu rỗng hay dòng 'không khả dụng'.
+
+    (Dòng tiêu đề trạng thái "Wi-Fi đã tắt" ở đầu menu là chuyện khác — nó nói
+    trạng thái máy, không phải một mục bấm được.)
+    """
+    snap = snapshot(
+        devices=[wifi_device(state=DeviceState.UNAVAILABLE, ip=None)],
+        wifi_enabled=False,
+    )
+    menu = make_menu(snap, rec)
+    assert find(menu, "Bật Wi-Fi") is None
+    assert find(menu, "không khả dụng") is None
+    assert not any(n.has_children and "Wi-Fi" in n.label for n in menu)

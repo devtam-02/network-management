@@ -153,3 +153,67 @@ def test_no_temp_file_left_behind(store):
 def test_names_with_quotes_survive(store):
     store.save([new_profile('Bộ "đặc biệt"')])
     assert store.load()[0].name == 'Bộ "đặc biệt"'
+
+
+# ── route riêng của Bộ cấu hình ──────────────────────────────────────────────
+
+
+def test_binding_routes_roundtrip():
+    from netmgr.domain.models import Ipv4Route
+
+    profile = new_profile(
+        "Công ty",
+        bindings=[
+            Binding(
+                "enp1s0",
+                BindingAction.ACTIVATE,
+                "uuid-lan",
+                routes=[
+                    Ipv4Route("10.0.0.0", 8, next_hop="10.207.154.254", metric=100),
+                    Ipv4Route("172.16.0.0", 12),
+                ],
+            )
+        ],
+    )
+    restored = profile_from_dict(profile_to_dict(profile))
+    routes = restored.bindings[0].routes
+    assert [str(r) for r in routes] == [
+        "10.0.0.0/8 via 10.207.154.254 metric 100",
+        "172.16.0.0/12 (on-link)",
+    ]
+
+
+def test_binding_routes_stored_as_readable_lines(store):
+    from netmgr.domain.models import Ipv4Route
+
+    store.save([
+        new_profile(
+            "X",
+            bindings=[Binding("enp1s0", BindingAction.ACTIVATE, "u",
+                              routes=[Ipv4Route("10.0.0.0", 8, next_hop="10.1.1.1")])],
+        )
+    ])
+    assert '"10.0.0.0/8 via 10.1.1.1"' in store.path.read_text()
+
+
+def test_disabled_route_not_persisted():
+    from netmgr.domain.models import Ipv4Route
+
+    profile = new_profile(
+        "X",
+        bindings=[Binding("enp1s0", BindingAction.ACTIVATE, "u", routes=[
+            Ipv4Route("10.0.0.0", 8),
+            Ipv4Route("172.16.0.0", 12, enabled=False),
+        ])],
+    )
+    restored = profile_from_dict(profile_to_dict(profile))
+    assert [r.cidr for r in restored.bindings[0].routes] == ["10.0.0.0/8"]
+
+
+def test_unparseable_route_line_skipped():
+    profile = profile_from_dict({
+        "id": "1", "name": "X",
+        "binding": [{"device_match": "eth0", "action": "activate",
+                     "routes": ["10.0.0.0/8 via 10.1.1.1", "rác"]}],
+    })
+    assert len(profile.bindings[0].routes) == 1

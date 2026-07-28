@@ -132,15 +132,52 @@ def test_denied_permission_blocks_actions():
     perms = Permissions(
         modify_system=PermissionState.NO, network_control=PermissionState.NO
     )
-    snap = snapshot(connections=[wifi_conn("A")], permissions=perms)
+    snap = snapshot(
+        devices=[wifi_device()], connections=[wifi_conn("A")], permissions=perms
+    )
     row = connection_rows(snap, ConnType.WIFI)[0]
     assert row.can_act is False and row.can_delete is False
 
 
 def test_unknown_permission_does_not_block():
-    snap = snapshot(connections=[wifi_conn("A")], permissions=Permissions())
+    """Thiết bị có mặt, chỉ permission là chưa biết → vẫn phải cho thao tác."""
+    snap = snapshot(
+        devices=[wifi_device()], connections=[wifi_conn("A")], permissions=Permissions()
+    )
     row = connection_rows(snap, ConnType.WIFI)[0]
     assert row.can_act is True and row.can_delete is True
+    assert row.blocked_reason == ""
+
+
+def test_missing_device_explains_why():
+    """Nút bị tắt phải nói được lý do khi người dùng bấm vào."""
+    snap = snapshot(connections=[wifi_conn("A", interface="wlp-đã-rút")])
+    row = connection_rows(snap, ConnType.WIFI)[0]
+    assert row.can_act is False
+    assert "không có mặt" in row.blocked_reason
+
+
+def test_denied_permission_explains_why():
+    perms = Permissions(network_control=PermissionState.NO)
+    snap = snapshot(
+        devices=[wifi_device()], connections=[wifi_conn("A")], permissions=perms
+    )
+    assert "polkit" in connection_rows(snap, ConnType.WIFI)[0].blocked_reason
+
+
+def test_wifi_off_explains_why():
+    snap = snapshot(
+        devices=[wifi_device()], connections=[wifi_conn("A")], wifi_enabled=False
+    )
+    assert "Wi-Fi đang tắt" in connection_rows(snap, ConnType.WIFI)[0].blocked_reason
+
+
+def test_busy_device_explains_why():
+    snap = snapshot(
+        devices=[wifi_device(state=DeviceState.CONNECTING)],
+        connections=[wifi_conn("A")],
+    )
+    assert "chờ" in connection_rows(snap, ConnType.WIFI)[0].blocked_reason
 
 
 def test_icons_differ_by_type():
@@ -338,3 +375,61 @@ def test_no_hint_when_wifi_saved():
 
 def test_no_hint_without_wifi_hardware():
     assert empty_wifi_hint(snapshot(devices=[eth_device()])) is None
+
+
+# ── tên và trạng thái thiết bị (dùng cho Bộ cấu hình) ────────────────────────
+
+
+def test_device_label_distinguishes_pci_and_usb():
+    """enx52578a6f8d22 không nói lên điều gì; "USB Ethernet" thì có."""
+    from netmgr.ui.view_models import device_label
+
+    pci = eth_device("enp1s0")
+    pci.hw_path = "pci-0000:01:00.0"
+    usb = eth_device("enx52578a6f8d22")
+    usb.hw_path = "pci-0000:00:14.0-usb-0:1:4.2"
+
+    assert device_label(pci) == "PCI Ethernet"
+    assert device_label(usb) == "USB Ethernet"
+
+
+def test_device_label_for_wifi():
+    from netmgr.ui.view_models import device_label
+
+    dev = wifi_device()
+    dev.hw_path = "pci-0000:00:14.0-usb-0:8:1.0"
+    assert device_label(dev) == "USB Wi-Fi"
+
+
+def test_device_label_without_path_defaults_to_pci():
+    from netmgr.ui.view_models import device_label
+
+    assert device_label(eth_device("eth0")) == "PCI Ethernet"
+
+
+def test_device_status_shows_connection_and_ip():
+    from netmgr.ui.view_models import device_status
+
+    conn = eth_conn("LAN enp1s0", active=True, interface="enp1s0")
+    dev = eth_device("enp1s0", ip="10.207.153.128")
+    dev.active_connection_uuid = conn.uuid
+    snap = snapshot(devices=[dev], connections=[conn])
+
+    text = device_status(dev, snap)
+    assert "Đã kết nối" in text
+    assert "LAN enp1s0" in text
+    assert "10.207.153.128/24" in text
+
+
+def test_device_status_when_unavailable():
+    from netmgr.ui.view_models import device_status
+
+    dev = wifi_device(state=DeviceState.UNAVAILABLE, ip=None)
+    assert device_status(dev, snapshot(devices=[dev])) == "Không khả dụng"
+
+
+def test_device_status_when_idle():
+    from netmgr.ui.view_models import device_status
+
+    dev = eth_device("enp1s0", state=DeviceState.DISCONNECTED, ip=None)
+    assert device_status(dev, snapshot(devices=[dev])) == "Chưa kết nối"

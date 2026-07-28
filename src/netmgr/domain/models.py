@@ -179,17 +179,32 @@ class Ipv4Config:
     addresses: list[Ipv4Address] = field(default_factory=list)
     gateway: str | None = None
     dns: list[str] = field(default_factory=list)
+    #: Search domain. Tiền tố `~` = chỉ định tuyến truy vấn DNS chứ không nối
+    #: vào tên ngắn — cách khai split-DNS cho mạng nhiều đường (xem 3.6).
     dns_search: list[str] = field(default_factory=list)
+    #: Độ ưu tiên DNS của connection này. Số NHỎ hơn thắng. Âm nghĩa là
+    #: "độc quyền": chỉ resolver này được hỏi cho các domain đã khai.
+    dns_priority: int | None = None
     routes: list[Ipv4Route] = field(default_factory=list)
+    #: Luật định tuyến theo nguồn (`ip rule`), lưu nguyên văn dạng NM hiểu.
+    #: Domain không parse — `infra` dùng `NM.IPRoutingRule` để validate.
+    routing_rules: list[str] = field(default_factory=list)
     ignore_auto_dns: bool = False
     ignore_auto_routes: bool = False
     never_default: bool = False
+    #: Metric mặc định cho mọi route của connection. Quyết định đường nào
+    #: thắng khi nhiều mạng cùng cấp default route.
     route_metric: int | None = None
     may_fail: bool = True
 
     @property
     def static_routes(self) -> list[Ipv4Route]:
         return [r for r in self.routes if r.source is RouteSource.STATIC]
+
+    @property
+    def routing_domains(self) -> list[str]:
+        """Domain chỉ dùng để định tuyến DNS (có tiền tố `~`)."""
+        return [d for d in self.dns_search if d.startswith("~")]
 
     def copy(self) -> Ipv4Config:
         """Bản sao sâu vừa đủ — Ipv4Route/Ipv4Address là frozen nên share được."""
@@ -199,6 +214,7 @@ class Ipv4Config:
             dns=list(self.dns),
             dns_search=list(self.dns_search),
             routes=list(self.routes),
+            routing_rules=list(self.routing_rules),
         )
 
 
@@ -251,6 +267,10 @@ class DeviceInfo:
     type: ConnType
     state: DeviceState = DeviceState.UNKNOWN
     mac: str | None = None
+    #: Đường phần cứng, vd "pci-0000:01:00.0" hoặc "pci-...-usb-0:1:4.2".
+    #: Dùng để gọi tên thiết bị theo cách người dùng nhận ra (PCI/USB) thay vì
+    #: tên kernel khó đọc như enx52578a6f8d22.
+    hw_path: str = ""
     # Runtime (đang áp dụng thực tế), khác với cấu hình đã lưu trong profile
     ip4_addresses: list[Ipv4Address] = field(default_factory=list)
     ip4_gateway: str | None = None
@@ -415,6 +435,12 @@ class Binding:
     connection_uuid: str | None = None
     owned: bool = False                     # app sở hữu → xoá cùng Bộ cấu hình
     required: bool = False                  # True → thiếu thiết bị là lỗi
+    #: Route tĩnh riêng của Bộ cấu hình cho interface này.
+    #:
+    #: Route thuộc về Bộ cấu hình chứ KHÔNG thuộc connection của hệ thống: mỗi
+    #: bối cảnh có bộ route riêng, và chúng chỉ được áp ở runtime nên tắt Bộ
+    #: cấu hình là máy trở về đúng cấu hình gốc.
+    routes: list[Ipv4Route] = field(default_factory=list)
 
     def matches(self, device: DeviceInfo) -> bool:
         if self.device_match == "any-ethernet":
@@ -422,6 +448,87 @@ class Binding:
         if self.device_match == "any-wifi":
             return device.type is ConnType.WIFI
         return self.device_match == device.interface
+
+
+@dataclass(frozen=True, slots=True)
+class SystemRoute:
+    """Một dòng trong bảng định tuyến thật của kernel.
+
+    Khác `Ipv4Route` ở chỗ nó luôn gắn với một interface cụ thể và gồm cả những
+    interface nằm ngoài phạm vi app quản lý (docker0, bridge, tailscale0) —
+    thiếu chúng thì việc tra cứu "địa chỉ này đi đường nào" sẽ ra kết quả sai.
+    """
+
+    interface: str
+    route: Ipv4Route
+
+    @property
+    def metric(self) -> int:
+        return self.route.metric if self.route.metric is not None else 0
+
+    def __str__(self) -> str:
+        return f"{self.route} dev {self.interface}"
+
+
+#: Tên bảng định tuyến chuẩn của kernel.
+ROUTE_TABLE_IDS = {"local": 255, "main": 254, "default": 253, "unspec": 0}
+
+
+@dataclass(frozen=True, slots=True)
+class RoutingRule:
+    """Một dòng `ip rule` — quyết định bảng nào được tra cứu trước.
+
+    Không thể bỏ qua khi mô phỏng định tuyến: phần mềm khác (Tailscale, VPN,
+    WireGuard) cài rule đứng TRƯỚC `lookup main`, nên chỉ nhìn bảng main sẽ ra
+    kết quả sai.
+    """
+
+    priority: int
+    table: int | None = None
+    from_prefix: str = "all"
+    to_prefix: str = "all"
+    fwmark: int = 0
+    fwmask: int = 0
+    iif: str | None = None
+    oif: str | None = None
+    invert: bool = False
+    #: "lookup" | "unreachable" | "blackhole" | "prohibit"
+    action: str = "lookup"
+
+    @property
+    def matches_plain_traffic(self) -> bool:
+        """Rule này có áp cho traffic thông thường của máy không.
+
+        Traffic thường không mang fwmark và không đến từ interface nào, nên rule
+        ràng buộc theo mark/iif/uid sẽ không khớp. Rule ràng buộc theo địa chỉ
+        nguồn thì chưa kết luận được (chưa biết source IP), coi như không khớp —
+        thà báo thiếu còn hơn báo sai.
+        """
+        return (
+            not self.fwmark
+            and not self.invert
+            and self.iif is None
+            and self.oif is None
+            and self.from_prefix in ("all", "0.0.0.0/0")
+            and self.to_prefix in ("all", "0.0.0.0/0")
+        )
+
+    def __str__(self) -> str:
+        parts = [f"{self.priority}:", f"from {self.from_prefix}"]
+        if self.to_prefix not in ("all", "0.0.0.0/0"):
+            parts.append(f"to {self.to_prefix}")
+        if self.fwmark:
+            parts.append(
+                f"fwmark {hex(self.fwmark)}"
+                + (f"/{hex(self.fwmask)}" if self.fwmask else "")
+            )
+        if self.iif:
+            parts.append(f"iif {self.iif}")
+        if self.action != "lookup":
+            parts.append(self.action)
+        elif self.table is not None:
+            parts.append(f"lookup {self.table}")
+        return " ".join(parts)
 
 
 @dataclass(slots=True)
@@ -434,6 +541,11 @@ class NetworkSnapshot:
 
     devices: list[DeviceInfo] = field(default_factory=list)
     connections: list[ConnectionProfile] = field(default_factory=list)
+    #: Bảng route gộp của MỌI interface NetworkManager biết, kể cả loại nằm
+    #: ngoài phạm vi app (docker0, bridge, VPN).
+    system_routes: list[SystemRoute] = field(default_factory=list)
+    #: `ip rule` thật của kernel, đã sắp theo priority.
+    routing_rules: list[RoutingRule] = field(default_factory=list)
     networking_enabled: bool = True
     wifi_enabled: bool = True
     wifi_hardware_enabled: bool = True

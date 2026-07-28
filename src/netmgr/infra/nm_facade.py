@@ -20,6 +20,7 @@ import gi
 gi.require_version("NM", "1.0")
 from gi.repository import GLib, NM  # noqa: E402
 
+from .kernel_rules import read_rules
 from ..domain.models import (
     ConnectionProfile,
     ConnType,
@@ -34,6 +35,7 @@ from ..domain.models import (
     PermissionState,
     Permissions,
     RouteSource,
+    SystemRoute,
     WifiStatus,
 )
 
@@ -190,6 +192,12 @@ def _apply_ipv4_to_setting(setting, config: Ipv4Config) -> None:
         if route.enabled:
             setting.add_route(_to_nm_route(route))
 
+    setting.clear_routing_rules()
+    for text in config.routing_rules:
+        rule = parse_routing_rule(text)
+        if rule is not None:
+            setting.add_routing_rule(rule)
+
     setting.set_property("ignore-auto-dns", config.ignore_auto_dns)
     setting.set_property("ignore-auto-routes", config.ignore_auto_routes)
     setting.set_property("never-default", config.never_default)
@@ -197,6 +205,46 @@ def _apply_ipv4_to_setting(setting, config: Ipv4Config) -> None:
     setting.set_property(
         "route-metric", -1 if config.route_metric is None else config.route_metric
     )
+    # 0 = để NM tự chọn theo loại connection. Chỉ ghi khi người dùng đặt tường minh.
+    setting.set_property(
+        "dns-priority", 0 if config.dns_priority is None else config.dns_priority
+    )
+
+
+def parse_routing_rule(text: str):
+    """Chuỗi `ip rule` → `NM.IPRoutingRule`, hoặc None nếu không parse được."""
+    try:
+        return NM.IPRoutingRule.from_string(
+            text.strip(), NM.IPRoutingRuleAsStringFlags.AF_INET, None
+        )
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def validate_routing_rule(text: str) -> str | None:
+    """Trả về thông báo lỗi, hoặc None nếu hợp lệ.
+
+    Dùng chính bộ parse của libnm thay vì tự viết: cú pháp `ip rule` nhiều biến
+    thể, tự parse chắc chắn sẽ lệch với thứ NetworkManager thực sự chấp nhận.
+    """
+    if not text.strip():
+        return "Luật không được để trống"
+    try:
+        NM.IPRoutingRule.from_string(
+            text.strip(), NM.IPRoutingRuleAsStringFlags.AF_INET, None
+        )
+    except GLib.Error as exc:
+        return exc.message
+    except Exception as exc:  # noqa: BLE001
+        return str(exc)
+    return None
+
+
+def format_routing_rule(rule) -> str:
+    try:
+        return rule.to_string(NM.IPRoutingRuleAsStringFlags.AF_INET, None)
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _ipv4_from_setting(setting) -> Ipv4Config:
@@ -215,14 +263,22 @@ def _ipv4_from_setting(setting) -> Ipv4Config:
         for i in range(setting.get_num_routes())
     ]
 
+    rules = [
+        format_routing_rule(setting.get_routing_rule(i))
+        for i in range(setting.get_num_routing_rules())
+    ]
+
     metric = setting.get_route_metric()
+    priority = setting.get_dns_priority()
     return Ipv4Config(
         method=_IPV4_METHOD_MAP.get(setting.get_method() or "auto", Ipv4Method.AUTO),
         addresses=addresses,
         gateway=setting.get_gateway(),
         dns=dns,
         dns_search=searches,
+        dns_priority=None if not priority else int(priority),
         routes=routes,
+        routing_rules=[r for r in rules if r],
         ignore_auto_dns=setting.get_ignore_auto_dns(),
         ignore_auto_routes=setting.get_ignore_auto_routes(),
         never_default=setting.get_never_default(),
@@ -272,6 +328,8 @@ class NMFacade:
         self._subscribers: list[Callable[[], None]] = []
         self._debounce_source: int | None = None
         self._signal_ids: list[tuple[object, int]] = []
+        #: Tách riêng để nối lại được khi danh sách device thay đổi.
+        self._device_signal_ids: list[tuple[object, int]] = []
 
     # ── đọc ─────────────────────────────────────────────────────────────────
 
@@ -283,6 +341,8 @@ class NMFacade:
         return NetworkSnapshot(
             devices=[self._device_info(d) for d in self._managed_devices()],
             connections=[self._connection_profile(c) for c in self._client.get_connections()],
+            system_routes=self._system_routes(),
+            routing_rules=read_rules(),
             networking_enabled=self._client.networking_get_enabled(),
             wifi_enabled=self._client.wireless_get_enabled(),
             wifi_hardware_enabled=self._client.wireless_hardware_get_enabled(),
@@ -301,6 +361,22 @@ class NMFacade:
             out.append(dev)
         return out
 
+    def _system_routes(self) -> list[SystemRoute]:
+        """Route của MỌI device, không chỉ ethernet/wifi.
+
+        Bỏ qua docker0/bridge/VPN sẽ khiến việc tra cứu "địa chỉ này đi đường
+        nào" trả lời sai — chúng vẫn nằm trong bảng định tuyến của kernel.
+        """
+        out: list[SystemRoute] = []
+        for dev in self._client.get_devices():
+            cfg = dev.get_ip4_config()
+            if cfg is None:
+                continue
+            iface = dev.get_iface() or "?"
+            for nm_route in cfg.get_routes():
+                out.append(SystemRoute(iface, _route_from_nm(nm_route, RouteSource.KERNEL)))
+        return out
+
     def _device_info(self, dev: NM.Device) -> DeviceInfo:
         dev_type = (
             ConnType.ETHERNET
@@ -315,6 +391,7 @@ class NMFacade:
             type=dev_type,
             state=_DEVICE_STATE_MAP.get(dev.get_state(), DeviceState.UNKNOWN),
             mac=dev.get_hw_address(),
+            hw_path=dev.get_path() or "",
             ip4_addresses=addresses,
             ip4_gateway=gateway,
             ip4_dns=dns,
@@ -427,20 +504,45 @@ class NMFacade:
             self._report(callback, OpResult.success())
 
     def activate_connection(
-        self, uuid: str, callback: OpCallback | None = None
+        self,
+        uuid: str | None,
+        interface: str | None = None,
+        callback: OpCallback | None = None,
     ) -> None:
-        """Kích hoạt một connection đã lưu (FR-W3, FR-F3)."""
-        conn = self._client.get_connection_by_uuid(uuid)
-        if conn is None:
+        """Kích hoạt một connection đã lưu (FR-W3, FR-F3).
+
+        `interface` là thiết bị BẮT BUỘC phải dùng. Bỏ trống thì để NM tự chọn —
+        đúng khi người dùng bấm thẳng vào một connection trong menu.
+
+        Nhưng khi Bộ cấu hình nói "enp1s0 → connection X" thì phải chỉ định rõ.
+        Nếu để NM tự chọn, một profile không ghim `interface-name` đang chạy trên
+        cổng khác sẽ được giữ nguyên chỗ cũ — người dùng bấm áp dụng mà không
+        thấy gì thay đổi.
+        """
+        # uuid=None nghĩa là "bật thiết bị này lên bằng cấu hình phù hợp nhất",
+        # đúng như khi người dùng cắm cáp. Nhờ vậy Bộ cấu hình chỉ cần biết
+        # thiết bị nào bật/tắt, không phải chọn connection.
+        conn = self._client.get_connection_by_uuid(uuid) if uuid else None
+        if uuid and conn is None:
             self._report(
                 callback, OpResult(False, f"Không tìm thấy connection {uuid[:8]}")
             )
             return
 
-        # device=None để NM tự chọn thiết bị phù hợp theo interface-name của
-        # profile. Tự chọn tay sẽ sai với profile không ghim interface.
+        device = None
+        if interface:
+            device = self._device_by_iface(interface)
+            if device is None:
+                self._report(
+                    callback, OpResult(False, f"Không tìm thấy thiết bị {interface}")
+                )
+                return
+
+        name = (conn.get_id() if conn else interface or "thiết bị") + (
+            f" trên {interface}" if conn and interface else ""
+        )
         self._client.activate_connection_async(
-            conn, None, None, None, self._on_activate_done, (callback, conn.get_id())
+            conn, device, None, None, self._on_activate_done, (callback, name)
         )
 
     def _on_activate_done(self, client, result, user_data) -> None:
@@ -478,164 +580,100 @@ class NMFacade:
         else:
             self._report(callback, OpResult.success())
 
-    def save_ipv4(
-        self,
-        uuid: str,
-        config: Ipv4Config,
-        *,
-        apply_now: bool = True,
-        callback: OpCallback | None = None,
+    # ── áp cấu hình Ở RUNTIME (không bao giờ ghi đĩa) ───────────────────────
+    #
+    # App CỐ TÌNH không có đường ghi xuống đĩa. Lý do là một sự cố có thật:
+    # `update2(TO_DISK)` trên Ubuntu khiến NetworkManager ghi connection ra
+    # /etc/netplan/90-NM-<uuid>.yaml, và vòng chuyển đổi đó LÀM MẤT
+    # `connection.interface-name`. Profile của cổng LAN biến thành profile
+    # ethernet chung rồi tự bám sang cổng USB vừa cắm — hỏng cấu hình mạng của
+    # người dùng theo cách rất khó lần ra.
+    #
+    # `reapply()` áp thẳng vào thiết bị đang chạy, không đụng gì tới đĩa. Ngắt
+    # kết nối hoặc gọi `restore_runtime()` là mọi thứ trở về đúng cấu hình gốc
+    # của máy.
+
+    def apply_runtime_routes(
+        self, interface: str, routes: list[Ipv4Route], callback: OpCallback | None = None
     ) -> None:
-        """Ghi cấu hình IPv4 (địa chỉ, DNS, route, chế độ) — §4.5.
+        """Áp danh sách route tĩnh lên thiết bị đang chạy, chỉ ở runtime."""
 
-        Năm bước bắt buộc, sai một bước là hỏng theo cách khó lần:
+        def mutate(setting) -> None:
+            setting.clear_routes()
+            for route in routes:
+                if route.enabled:
+                    setting.add_route(_to_nm_route(route))
 
-        1. Lấy `NM.RemoteConnection`
-        2. **Clone** — sửa thẳng object gốc thì thay đổi không được commit, hoặc
-           bị ghi đè khi NM refresh
-        3. Sửa trên bản clone
-        4. **verify()** — bắt lỗi ở đây, nếu không sẽ nhận lỗi D-Bus khó hiểu ở
-           tận bước update
-        5. `update2(TO_DISK)`, rồi reapply nếu người dùng muốn áp dụng ngay
+        self._reapply_with(interface, mutate, callback, f"Áp route cho {interface}")
+
+    def restore_runtime(self, interface: str, callback: OpCallback | None = None) -> None:
+        """Trả thiết bị về đúng cấu hình đã lưu của máy.
+
+        Reapply chính `NM.RemoteConnection` trên đĩa, nên mọi thay đổi runtime
+        do app tạo ra đều biến mất.
         """
-        conn = self._client.get_connection_by_uuid(uuid)
-        if conn is None:
-            self._report(callback, OpResult(False, f"Không tìm thấy connection {uuid[:8]}"))
+        device = self._device_by_iface(interface)
+        if device is None:
+            self._report(callback, OpResult.success())   # không có gì để trả
             return
 
-        name = conn.get_id()
-        clone = NM.SimpleConnection.new_clone(conn)
-        setting = clone.get_setting_ip4_config()
-        if setting is None:
-            setting = NM.SettingIP4Config.new()
-            clone.add_setting(setting)
-
-        try:
-            _apply_ipv4_to_setting(setting, config)
-        except Exception as exc:  # noqa: BLE001
-            self._report(callback, OpResult.failure(exc, f"Dựng cấu hình cho '{name}'"))
+        active = device.get_active_connection()
+        stored = active.get_connection() if active else None
+        if stored is None:
+            self._report(callback, OpResult.success())
             return
 
-        try:
-            clone.verify()
-        except GLib.Error as exc:
-            # Thông báo của libnm ở đây khá cụ thể ("ipv4.addresses: this
-            # property cannot be empty for method=manual"), đáng để hiện thẳng.
-            self._report(callback, OpResult(False, f"Cấu hình không hợp lệ: {exc.message}"))
-            return
-
-        conn.update2(
-            clone.to_dbus(NM.ConnectionSerializationFlags.ALL),
-            NM.SettingsUpdate2Flags.TO_DISK,
-            None,
-            None,
-            self._on_update_done,
-            (callback, name, uuid, apply_now),
+        device.reapply_async(
+            stored, 0, 0, None, self._on_reapply_done,
+            (callback, f"Khôi phục {interface}"),
         )
 
-    def _on_update_done(self, conn, result, user_data) -> None:
-        callback, name, uuid, apply_now = user_data
-        try:
-            conn.update2_finish(result)
-        except Exception as exc:  # noqa: BLE001
-            self._report(callback, OpResult.failure(exc, f"Lưu '{name}'"))
-            return
-
-        if not apply_now:
-            self._report(
-                callback,
-                OpResult.success("Đã lưu — sẽ có hiệu lực ở lần kết nối sau"),
-            )
-            return
-
-        device = self._device_for_active_uuid(uuid)
+    def _reapply_with(self, interface, mutate, callback, context) -> None:
+        device = self._device_by_iface(interface)
         if device is None:
-            # Không đang chạy thì không có gì để áp dụng; đã lưu là xong.
-            self._report(callback, OpResult.success("Đã lưu"))
+            self._report(callback, OpResult(False, f"Không tìm thấy thiết bị {interface}"))
+            return
+        device.get_applied_connection_async(
+            0, None, self._on_applied_fetched, (device, mutate, callback, context)
+        )
+
+    def _on_applied_fetched(self, device, result, user_data) -> None:
+        _device, mutate, callback, context = user_data
+        try:
+            connection, version_id = device.get_applied_connection_finish(result)
+        except Exception as exc:  # noqa: BLE001
+            self._report(callback, OpResult.failure(exc, context))
             return
 
-        # version_id=0 nghĩa là "bản đang áp dụng hiện tại", flags=0 mặc định.
-        device.reapply_async(None, 0, 0, None, self._on_reapply_done, (callback, name, uuid))
+        setting = connection.get_setting_ip4_config()
+        if setting is None:
+            self._report(callback, OpResult(False, f"{context}: thiết bị không có IPv4"))
+            return
+
+        try:
+            mutate(setting)
+        except Exception as exc:  # noqa: BLE001
+            self._report(callback, OpResult.failure(exc, context))
+            return
+
+        # version_id đảm bảo không ghi đè lên thay đổi vừa xảy ra ở nơi khác.
+        device.reapply_async(
+            connection, version_id, 0, None, self._on_reapply_done, (callback, context)
+        )
 
     def _on_reapply_done(self, device, result, user_data) -> None:
-        callback, name, uuid = user_data
+        callback, context = user_data
         try:
             device.reapply_finish(result)
         except Exception as exc:  # noqa: BLE001
-            # reapply KHÔNG xử lý được mọi thay đổi (đổi ipv4.method auto↔manual
-            # là ví dụ điển hình). Khi đó phải kích hoạt lại — kết nối sẽ chớp
-            # tắt một nhịp, nên phải báo cho người dùng biết.
-            log.info("reapply '%s' thất bại (%s) — chuyển sang kích hoạt lại",
-                     name, getattr(exc, "message", exc))
-            self._reactivate(uuid, name, callback)
-            return
-        self._report(callback, OpResult.success("Đã lưu và áp dụng"))
-
-    def _reactivate(self, uuid: str, name: str, callback: OpCallback | None) -> None:
-        conn = self._client.get_connection_by_uuid(uuid)
-        device = self._device_for_active_uuid(uuid)
-        if conn is None or device is None:
-            self._report(callback, OpResult.success("Đã lưu"))
-            return
-        self._client.activate_connection_async(
-            conn, device, None, None, self._on_reactivate_done, (callback, name)
-        )
-
-    def _on_reactivate_done(self, client, result, user_data) -> None:
-        callback, name = user_data
-        try:
-            client.activate_connection_finish(result)
-        except Exception as exc:  # noqa: BLE001
-            self._report(
-                callback,
-                OpResult(
-                    False,
-                    f"Đã lưu nhưng không áp dụng được cho '{name}': "
-                    f"{getattr(exc, 'message', exc)}",
-                ),
-            )
-        else:
-            self._report(
-                callback, OpResult.success("Đã lưu và kết nối lại để áp dụng")
-            )
-
-    def _device_for_active_uuid(self, uuid: str) -> NM.Device | None:
-        for active in self._client.get_active_connections():
-            if active.get_uuid() == uuid:
-                devices = active.get_devices()
-                return devices[0] if devices else None
-        return None
-
-    def delete_connection(self, uuid: str, callback: OpCallback | None = None) -> None:
-        """Xoá vĩnh viễn một connection đã lưu (FR-W5, FR-F5)."""
-        conn = self._client.get_connection_by_uuid(uuid)
-        if conn is None:
-            self._report(
-                callback, OpResult(False, f"Không tìm thấy connection {uuid[:8]}")
-            )
-            return
-
-        name = conn.get_id()
-        if any(ac.get_uuid() == uuid for ac in self._client.get_active_connections()):
-            # NM cho phép xoá profile đang chạy, nhưng làm vậy sẽ ngắt mạng ngay
-            # lập tức. Chặn ở đây để lỗi này không tuỳ thuộc vào việc UI có nhớ
-            # disable nút hay không.
-            self._report(
-                callback,
-                OpResult(False, f"'{name}' đang được sử dụng — hãy ngắt kết nối trước"),
-            )
-            return
-
-        conn.delete_async(None, self._on_delete_done, (callback, name))
-
-    def _on_delete_done(self, conn, result, user_data) -> None:
-        callback, name = user_data
-        try:
-            conn.delete_finish(result)
-        except Exception as exc:  # noqa: BLE001
-            self._report(callback, OpResult.failure(exc, f"Xoá '{name}'"))
+            self._report(callback, OpResult.failure(exc, context))
         else:
             self._report(callback, OpResult.success())
+
+    def _device_by_iface(self, interface: str):
+        return next(
+            (d for d in self._client.get_devices() if d.get_iface() == interface), None
+        )
 
     @staticmethod
     def _report(callback: OpCallback | None, result: OpResult) -> None:
@@ -713,11 +751,33 @@ class NMFacade:
             handler = obj.connect(signal, lambda *_a: self._schedule_notify())
             self._signal_ids.append((obj, handler))
 
-        # State/IP của từng device không bắn qua client, phải nghe riêng.
+        c.connect("device-added", lambda *_a: self._rewire_devices())
+        c.connect("device-removed", lambda *_a: self._rewire_devices())
+        self._rewire_devices()
+
+    #: Tín hiệu của từng device cần nghe riêng — client không chuyển tiếp chúng.
+    _DEVICE_SIGNALS = ("state-changed", "notify::ip4-config", "notify::active-connection")
+
+    def _rewire_devices(self) -> None:
+        """Nối lại tín hiệu cho TẤT CẢ device hiện có.
+
+        Phải gọi lại mỗi khi danh sách device đổi. Nếu chỉ nối một lần lúc khởi
+        động thì thiết bị cắm sau (USB ethernet, điện thoại chia sẻ mạng, dock)
+        sẽ không bao giờ được theo dõi: `device-added` chỉ bắn đúng một lần, còn
+        quá trình thiết bị đó lấy IP thì app không hay biết — nhìn như app không
+        nhận ra thiết bị.
+        """
+        for dev, handler in self._device_signal_ids:
+            try:
+                dev.disconnect(handler)
+            except Exception:  # noqa: BLE001 — device đã biến mất
+                pass
+        self._device_signal_ids.clear()
+
         for dev in self._managed_devices():
-            for signal in ("state-changed", "notify::ip4-config", "notify::active-connection"):
+            for signal in self._DEVICE_SIGNALS:
                 handler = dev.connect(signal, lambda *_a: self._schedule_notify())
-                self._signal_ids.append((dev, handler))
+                self._device_signal_ids.append((dev, handler))
 
     def _schedule_notify(self) -> None:
         """Gom signal dồn dập thành một lần thông báo (§4.8).
@@ -743,10 +803,11 @@ class NMFacade:
         if self._debounce_source is not None:
             GLib.source_remove(self._debounce_source)
             self._debounce_source = None
-        for obj, handler in self._signal_ids:
+        for obj, handler in [*self._signal_ids, *self._device_signal_ids]:
             try:
                 obj.disconnect(handler)
             except Exception:  # noqa: BLE001
                 pass
         self._signal_ids.clear()
+        self._device_signal_ids.clear()
         self._subscribers.clear()

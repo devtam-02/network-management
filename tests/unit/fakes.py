@@ -17,6 +17,9 @@ class FakeNetwork:
         self.fail: dict[str, str] = {}
         #: True = activate chỉ "nhận yêu cầu", device không lên CONNECTED.
         self.activation_hangs = False
+        #: Route đã áp ở runtime, theo interface.
+        self.runtime_routes: dict[str, list] = {}
+        self.last_activate_interface: str | None = None
 
     def snapshot(self):
         return self._snapshot
@@ -35,26 +38,32 @@ class FakeNetwork:
                 device.state = DeviceState.UNAVAILABLE
         callback(OpResult.success())
 
-    def activate_connection(self, uuid: str, callback) -> None:
+    def activate_connection(self, uuid: str, interface=None, callback=None) -> None:
         self.calls.append(("activate", uuid))
+        #: Interface mà lần activate gần nhất nhắm tới — None nghĩa là để NM chọn.
+        self.last_activate_interface = interface
         if "activate" in self.fail:
             callback(OpResult(False, self.fail["activate"]))
             return
 
-        conn = self._snapshot.connection_by_uuid(uuid)
-        if conn is None:
+        conn = self._snapshot.connection_by_uuid(uuid) if uuid else None
+        if uuid and conn is None:
             callback(OpResult(False, "không tìm thấy"))
             return
 
-        device = self._snapshot.device_by_interface(conn.interface_name or "")
+        device = self._snapshot.device_by_interface(
+            interface or (conn.interface_name if conn else "") or ""
+        )
         if device is not None:
             self._detach(device)
             device.active_connection_uuid = uuid
             device.state = (
                 DeviceState.CONNECTING if self.activation_hangs else DeviceState.CONNECTED
             )
-            conn.device_interface = device.interface
-        conn.is_active = True
+            if conn is not None:
+                conn.device_interface = device.interface
+        if conn is not None:
+            conn.is_active = True
         callback(OpResult.success())
 
     def deactivate_connection(self, uuid: str, callback) -> None:
@@ -70,6 +79,19 @@ class FakeNetwork:
             if device.active_connection_uuid == uuid:
                 device.active_connection_uuid = None
                 device.state = DeviceState.DISCONNECTED
+        callback(OpResult.success())
+
+    def apply_runtime_routes(self, interface: str, routes, callback) -> None:
+        self.calls.append(("routes", interface))
+        if "routes" in self.fail:
+            callback(OpResult(False, self.fail["routes"]))
+            return
+        self.runtime_routes[interface] = list(routes)
+        callback(OpResult.success())
+
+    def restore_runtime(self, interface: str, callback) -> None:
+        self.calls.append(("restore", interface))
+        self.runtime_routes.pop(interface, None)
         callback(OpResult.success())
 
     def _detach(self, device) -> None:

@@ -67,28 +67,39 @@ PYTHONPATH=src python3 -m netmgr window
 
 Cửa sổ cấu hình mở ra và icon xuất hiện ở góc phải trên. Ctrl+C ở terminal để thoát.
 
-### Bước 5 — cài chạy thường trú (tuỳ chọn)
+### Bước 5 — cài thành app bấm được trên giao diện
 
 ```bash
 ./install.sh install
 ```
 
-Việc này tạo ba thứ, tất cả trong thư mục của bạn, **không cần sudo**:
+Tạo ba thứ, đều nằm trong thư mục của bạn, **không cần sudo**:
 
 | Đường dẫn | Tác dụng |
 |---|---|
-| `~/.local/bin/netmgr` | Lệnh `netmgr` chạy thẳng từ source |
-| `~/.config/autostart/netmgr.desktop` | Tự chạy khi đăng nhập |
-| `~/.config/systemd/user/netmgr.service` | Phương án thay thế autostart (chưa bật) |
+| `~/.local/bin/netmgr` | Lệnh `netmgr` gõ được ở terminal |
+| `~/.local/share/applications/netmgr.desktop` | Mục **Quản lý mạng** trong menu ứng dụng |
+| `~/.local/share/icons/.../netmgr.svg` | Biểu tượng |
 
-Nếu muốn dùng systemd thay vì autostart (có tự khởi động lại khi lỗi, log vào
-journald):
+Sau đó mở app bằng cách bấm **Quản lý mạng** trong danh sách ứng dụng (phím
+`Super` rồi gõ "mạng"), hoặc gõ `netmgr` ở terminal. Cửa sổ cấu hình hiện ra và
+tray icon tự xuất hiện kèm theo — chúng là cùng một tiến trình.
+
+Bấm lại vào app khi nó đang chạy sẽ mở lại cửa sổ chứ không tạo tiến trình mới.
+
+### Bước 6 — khởi động cùng máy (tuỳ chọn, mặc định TẮT)
+
+Mặc định app **không** tự chạy khi đăng nhập: bạn mở khi cần, thoát khi không
+cần. Muốn nó chạy sẵn ở tray mỗi lần đăng nhập:
 
 ```bash
-rm ~/.config/autostart/netmgr.desktop      # tránh chạy hai lần
-systemctl --user enable --now netmgr
-journalctl --user -u netmgr -f             # xem log
+./install.sh autostart        # bật
+./install.sh no-autostart     # tắt
+./install.sh                  # xem đang bật hay tắt
 ```
+
+Khi bật, app khởi động ở chế độ nền — chỉ có tray icon, không bật cửa sổ vào mặt
+bạn lúc đăng nhập.
 
 ---
 
@@ -244,7 +255,60 @@ dụng một lần:
 Một số thay đổi lớn (đổi Tự động ↔ Thủ công) không áp dụng nóng được; app sẽ tự
 kết nối lại và báo cho bạn biết — mạng chớp tắt một nhịp.
 
-### 5.4 Proxy
+### 5.4 Định tuyến — dùng nhiều mạng cùng lúc
+
+Trang này dành cho tình huống nhiều mạng chạy song song và bạn muốn *truy cập
+địa chỉ nào thì đi ra mạng của địa chỉ đó*.
+
+**"Địa chỉ này đi đường nào?"** — gõ một IP, app trả lời interface nào sẽ nhận và
+**vì sao**:
+
+```
+10.60.101.189 → enp1s0 qua 10.207.154.254
+                (khớp 10.0.0.0/8, cụ thể hơn 1 route khác)
+```
+
+App mô phỏng đúng cách kernel chọn: duyệt `ip rule` theo priority, trong bảng
+tương ứng thì prefix dài nhất thắng, hoà thì metric nhỏ hơn thắng. Kết quả đã
+được đối chiếu khớp 17/17 với `ip route get` trên máy thật.
+
+**Nhận xét** chỉ ra những điều dễ bỏ sót:
+
+- dải nào đã tách khỏi đường mặc định
+- nhiều default route cùng metric (kết quả không đoán trước được)
+- bảng định tuyến phụ được tra **trước** bảng chính — thường do VPN cài
+
+**Bảng route** hiển thị theo từng interface, gồm cả `docker0`, bridge và VPN.
+
+**Luật định tuyến của hệ thống** liệt kê `ip rule` thật, kể cả luật do phần mềm
+khác cài mà NetworkManager không quản lý.
+
+#### Ba núm để điều khiển
+
+| Núm | Ở đâu | Dùng khi |
+|---|---|---|
+| **Route tĩnh** | Chi tiết → Route IPv4 | "Dải 10.20/16 đi qua LAN công ty" |
+| **Metric mặc định** | Chi tiết → IPv4 | Chọn mạng nào là đường chính, mạng nào dự phòng |
+| **Luật định tuyến** | Chi tiết → Luật định tuyến | Định tuyến theo **nguồn** thay vì đích |
+
+#### Đừng quên DNS
+
+Route đúng chưa đủ. Nếu tên nội bộ vẫn hỏi DNS của mạng công cộng thì bạn nhận
+về IP sai và route đúng cũng vô nghĩa.
+
+Chi tiết → **Định tuyến DNS**:
+
+- **Search domain** — thêm `~viettelmoney.vn` để mọi truy vấn `*.viettelmoney.vn`
+  đi tới DNS của kết nối này. Tiền tố `~` nghĩa là *chỉ định tuyến*, không nối
+  vào tên ngắn.
+- **Độ ưu tiên DNS** — số nhỏ hơn thắng; số âm nghĩa là độc quyền cho các domain
+  đã khai.
+
+> ⚠️ **Bẫy:** bật "Bỏ qua DNS tự động" sẽ bỏ luôn search domain do DHCP cấp. Nếu
+> mạng của bạn đang dựa vào domain đó, phải khai lại bằng tay ở ô trên. App có
+> cảnh báo ngay tại chỗ khi rơi vào tình huống này.
+
+### 5.5 Proxy
 
 "Proxy" trên Linux không phải một công tắc mà là **nhiều lớp độc lập**:
 
@@ -268,7 +332,7 @@ Mật khẩu proxy lưu trong **GNOME Keyring**, không bao giờ ghi vào file 
 Khi bật proxy có xác thực, một bản sao được đặt vào dconf vì đó là chỗ duy nhất
 trình duyệt đọc được; bản sao đó bị xoá khi tắt proxy.
 
-### 5.5 Chẩn đoán
+### 5.6 Chẩn đoán
 
 Trả lời câu hỏi kinh điển *"tôi tắt proxy rồi mà sao `apt` vẫn đi qua proxy?"* —
 trang này cho thấy **từng lớp** đang ở trạng thái nào, cùng với các quyền polkit

@@ -3,8 +3,13 @@
 # netmgr — script kiểm tra môi trường và cài đặt chạy-từ-source.
 #
 #   ./install.sh              kiểm tra môi trường, không thay đổi gì
-#   ./install.sh install      cài autostart + lệnh `netmgr` vào ~/.local/bin
-#   ./install.sh uninstall    gỡ những thứ trên
+#   ./install.sh install      cài lệnh `netmgr` + mục trong menu ứng dụng
+#   ./install.sh autostart    BẬT khởi động cùng máy
+#   ./install.sh no-autostart TẮT khởi động cùng máy
+#   ./install.sh uninstall    gỡ tất cả
+#
+# Mặc định app KHÔNG tự khởi động: bạn mở từ menu ứng dụng khi cần, tray hiện
+# theo. Muốn nó chạy sẵn mỗi lần đăng nhập thì chạy thêm `autostart`.
 #
 # Script này KHÔNG cần sudo. Việc cài gói hệ thống được in ra để bạn tự chạy —
 # script không tự ý gọi apt.
@@ -16,8 +21,10 @@ BIN_DIR="${HOME}/.local/bin"
 LAUNCHER="${BIN_DIR}/netmgr"
 AUTOSTART_DIR="${HOME}/.config/autostart"
 AUTOSTART_FILE="${AUTOSTART_DIR}/netmgr.desktop"
-UNIT_DIR="${HOME}/.config/systemd/user"
-UNIT_FILE="${UNIT_DIR}/netmgr.service"
+APPS_DIR="${HOME}/.local/share/applications"
+APP_FILE="${APPS_DIR}/netmgr.desktop"
+ICON_DIR="${HOME}/.local/share/icons/hicolor/scalable/apps"
+ICON_FILE="${ICON_DIR}/netmgr.svg"
 EXTENSION="ubuntu-appindicators@ubuntu.com"
 
 RED=$'\e[31m'; GREEN=$'\e[32m'; YELLOW=$'\e[33m'; DIM=$'\e[2m'; OFF=$'\e[0m'
@@ -97,9 +104,11 @@ do_check() {
 
     echo
     echo "Đã cài chưa"
-    [[ -x "$LAUNCHER" ]]       && ok "Lệnh: $LAUNCHER"       || note "Chưa cài lệnh netmgr"
-    [[ -f "$AUTOSTART_FILE" ]] && ok "Autostart: $AUTOSTART_FILE" \
-                               || note "Chưa bật khởi động cùng hệ thống"
+    [[ -x "$LAUNCHER" ]] && ok "Lệnh: netmgr"        || note "Chưa cài lệnh netmgr"
+    [[ -f "$APP_FILE" ]] && ok "Có trong menu ứng dụng" \
+                         || note "Chưa có trong menu ứng dụng"
+    [[ -f "$AUTOSTART_FILE" ]] && ok "Khởi động cùng máy: BẬT" \
+                               || note "Khởi động cùng máy: tắt (mặc định)"
 
     echo
     if (( FATAL )); then
@@ -113,17 +122,31 @@ do_check() {
     fi
     ok "Môi trường sẵn sàng."
     echo
-    echo "  Chạy thử:      PYTHONPATH=${ROOT}/src python3 -m netmgr window"
-    echo "  Cài thường trú: ${BASH_SOURCE[0]} install"
+    echo "  Chạy thử: PYTHONPATH=${ROOT}/src python3 -m netmgr window"
+    echo "  Cài đặt:  ${BASH_SOURCE[0]} install"
     return 0
 }
 
 # ── cài ───────────────────────────────────────────────────────────────────────
 
+write_icon() {
+    mkdir -p "$ICON_DIR"
+    cat > "$ICON_FILE" <<'EOF'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <circle cx="32" cy="32" r="29" fill="#3584e4"/>
+  <g fill="none" stroke="#fff" stroke-width="3.4" stroke-linecap="round">
+    <path d="M14 40a26 26 0 0 1 36 0"/>
+    <path d="M21 47a17 17 0 0 1 22 0"/>
+  </g>
+  <circle cx="32" cy="53" r="4.2" fill="#fff"/>
+</svg>
+EOF
+}
+
 do_install() {
     do_check || { echo "Dừng lại vì môi trường chưa đủ."; return 1; }
 
-    mkdir -p "$BIN_DIR" "$AUTOSTART_DIR" "$UNIT_DIR"
+    mkdir -p "$BIN_DIR" "$APPS_DIR"
 
     cat > "$LAUNCHER" <<EOF
 #!/usr/bin/env bash
@@ -131,42 +154,32 @@ do_install() {
 exec env PYTHONPATH="${ROOT}/src" python3 -m netmgr "\$@"
 EOF
     chmod +x "$LAUNCHER"
-    ok "Đã tạo $LAUNCHER"
+    ok "Đã tạo lệnh netmgr"
 
-    cat > "$AUTOSTART_FILE" <<EOF
+    write_icon
+    ok "Đã cài biểu tượng"
+
+    # Mở bằng `window`: bấm vào app trong menu thì phải thấy cửa sổ hiện ra.
+    # Tray tự xuất hiện kèm theo vì cùng một tiến trình.
+    cat > "$APP_FILE" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Quản lý mạng
-Comment=Quản lý proxy, kết nối và route IPv4 từ khay hệ thống
-Exec=${LAUNCHER} tray
-Icon=network-wired-symbolic
+Name[en]=Network Manager
+Comment=Quản lý proxy, kết nối, route IPv4 và Bộ cấu hình
+Comment[en]=Manage proxy, connections, IPv4 routes and profiles
+Exec=${LAUNCHER} window
+Icon=netmgr
 Terminal=false
 Categories=Network;
-X-GNOME-Autostart-enabled=true
-# Chờ NetworkManager và extension appindicator sẵn sàng; thiếu độ trễ này thì
-# icon vẫn hiện (app tự đăng ký lại) nhưng sẽ nhấp nháy lúc đăng nhập.
-X-GNOME-Autostart-Delay=3
+Keywords=mạng;proxy;wifi;route;network;
+StartupNotify=true
+StartupWMClass=io.github.netmgr
 EOF
-    ok "Đã bật khởi động cùng hệ thống"
+    ok "Đã thêm vào menu ứng dụng"
 
-    cat > "$UNIT_FILE" <<EOF
-[Unit]
-Description=netmgr — quản lý mạng & proxy
-After=graphical-session.target
-PartOf=graphical-session.target
-
-[Service]
-Type=exec
-ExecStart=${LAUNCHER} tray
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=graphical-session.target
-EOF
-    ok "Đã tạo systemd user unit (chưa bật)"
-    note "Dùng systemd thay cho autostart thì: systemctl --user enable --now netmgr"
-    note "Khi đó nhớ xoá ${AUTOSTART_FILE} để khỏi chạy hai lần"
+    update-desktop-database "$APPS_DIR" >/dev/null 2>&1
+    gtk-update-icon-cache -f -t "${HOME}/.local/share/icons/hicolor" >/dev/null 2>&1
 
     if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then
         warn "${BIN_DIR} không nằm trong PATH"
@@ -174,17 +187,69 @@ EOF
     fi
 
     echo
-    ok "Xong. Chạy ngay: netmgr tray &"
+    ok "Xong."
+    echo "  Mở từ menu ứng dụng:  tìm \"Quản lý mạng\""
+    echo "  Hoặc từ terminal:     netmgr"
+    echo
+    if [[ -f "$AUTOSTART_FILE" ]]; then
+        note "Khởi động cùng máy đang BẬT — tắt bằng: ${BASH_SOURCE[0]} no-autostart"
+    else
+        note "App KHÔNG tự chạy khi đăng nhập. Muốn bật:"
+        note "    ${BASH_SOURCE[0]} autostart"
+    fi
+}
+
+# ── khởi động cùng máy ────────────────────────────────────────────────────────
+
+do_autostart() {
+    if [[ ! -x "$LAUNCHER" ]]; then
+        bad "Chưa cài. Chạy `${BASH_SOURCE[0]} install` trước."
+        return 1
+    fi
+    mkdir -p "$AUTOSTART_DIR"
+    # Autostart dùng `tray` chứ không phải `window`: chạy nền lúc đăng nhập,
+    # không bật cửa sổ vào mặt người dùng.
+    cat > "$AUTOSTART_FILE" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Quản lý mạng
+Comment=Chạy nền ở khay hệ thống
+Exec=${LAUNCHER} tray
+Icon=netmgr
+Terminal=false
+Categories=Network;
+X-GNOME-Autostart-enabled=true
+# Chờ NetworkManager và extension appindicator sẵn sàng; thiếu độ trễ này thì
+# icon vẫn hiện (app tự đăng ký lại) nhưng sẽ nhấp nháy lúc đăng nhập.
+X-GNOME-Autostart-Delay=3
+EOF
+    ok "Đã BẬT khởi động cùng máy"
+    note "Tắt bằng: ${BASH_SOURCE[0]} no-autostart"
+}
+
+do_no_autostart() {
+    if [[ -f "$AUTOSTART_FILE" ]]; then
+        rm -f "$AUTOSTART_FILE"
+        ok "Đã TẮT khởi động cùng máy"
+    else
+        note "Khởi động cùng máy vốn đã tắt"
+    fi
 }
 
 # ── gỡ ────────────────────────────────────────────────────────────────────────
 
 do_uninstall() {
-    systemctl --user disable --now netmgr 2>/dev/null
     local removed=0
-    for f in "$LAUNCHER" "$AUTOSTART_FILE" "$UNIT_FILE"; do
+    for f in "$LAUNCHER" "$AUTOSTART_FILE" "$APP_FILE" "$ICON_FILE"; do
         [[ -e "$f" ]] && rm -f "$f" && ok "Đã xoá $f" && removed=1
     done
+    # Bản cũ có tạo systemd user unit; dọn nốt nếu còn.
+    local legacy="${HOME}/.config/systemd/user/netmgr.service"
+    if [[ -e "$legacy" ]]; then
+        systemctl --user disable --now netmgr 2>/dev/null
+        rm -f "$legacy" && ok "Đã xoá $legacy" && removed=1
+    fi
+    update-desktop-database "$APPS_DIR" >/dev/null 2>&1
     (( removed )) || note "Không có gì để gỡ"
     echo
     note "Cấu hình của bạn KHÔNG bị xoá: ~/.config/netmgr/"
@@ -193,8 +258,10 @@ do_uninstall() {
 }
 
 case "${1:-check}" in
-    check)     do_check ;;
-    install)   do_install ;;
-    uninstall) do_uninstall ;;
-    *) echo "Dùng: $0 [check|install|uninstall]"; exit 2 ;;
+    check)        do_check ;;
+    install)      do_install ;;
+    autostart)    do_autostart ;;
+    no-autostart) do_no_autostart ;;
+    uninstall)    do_uninstall ;;
+    *) echo "Dùng: $0 [check|install|autostart|no-autostart|uninstall]"; exit 2 ;;
 esac

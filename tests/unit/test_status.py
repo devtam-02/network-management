@@ -166,9 +166,11 @@ def test_profile_label_becomes_tray_label():
     assert s.label == "Nhà"
 
 
-def test_profile_line_comes_first():
+def test_profile_name_not_duplicated_in_status_lines():
+    """Submenu tray đã mang nhãn Bộ cấu hình rồi — thêm vào đây là lặp."""
     s = compute_status(snapshot(devices=[wifi_device()]), profile_label="Công ty")
-    assert s.status_lines[0].startswith("Bộ cấu hình:")
+    assert not any("Bộ cấu hình" in line for line in s.status_lines)
+    assert s.label == "Công ty"
 
 
 def test_drifted_profile_raises_attention():
@@ -176,7 +178,7 @@ def test_drifted_profile_raises_attention():
         snapshot(devices=[wifi_device()]), profile_label="Công ty", profile_drifted=True
     )
     assert s.attention is True
-    assert "đã chỉnh sửa" in s.status_lines[0]
+    assert any("chỉnh sửa" in line for line in s.status_lines)
 
 
 def test_no_drift_means_no_attention():

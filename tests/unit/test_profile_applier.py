@@ -216,13 +216,15 @@ def test_missing_optional_device_is_ignored(world):
     assert lan.is_active
 
 
-def test_binding_without_connection_fails_validation(world):
+def test_binding_without_connection_lets_nm_choose(world):
+    """Bật thiết bị mà không chỉ định connection — như khi cắm cáp bình thường."""
     network, proxy, _lan, _ = world
     profile = new_profile("X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE, None)])
     report, _ = run(make_applier(network, proxy), profile)
 
-    assert not report.ok
-    assert "chưa chọn cấu hình" in report.step("validate").detail
+    assert report.ok, report.summary()
+    assert ("activate", None) in network.calls
+    assert network.last_activate_interface == "enp3s0"
 
 
 def test_deleted_connection_fails_validation(world):
@@ -473,3 +475,160 @@ def test_busy_flag_cleared_after_rollback(world):
     applier = make_applier(network, proxy)
     run(applier, profile)
     assert applier.busy is False
+
+
+# ── route riêng của Bộ cấu hình (chỉ runtime) ────────────────────────────────
+
+
+def route(dest="10.0.0.0", prefix=8, **kw):
+    from netmgr.domain.models import Ipv4Route
+
+    return Ipv4Route(dest, prefix, **kw)
+
+
+def test_routes_applied_to_right_interface(world):
+    network, proxy, lan, _ = world
+    profile = new_profile(
+        "X",
+        bindings=[
+            Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid,
+                    routes=[route(next_hop="10.0.5.1")])
+        ],
+    )
+    report, _ = run(make_applier(network, proxy), profile)
+
+    assert report.ok, report.summary()
+    assert ("routes", "enp3s0") in network.calls
+    assert [r.cidr for r in network.runtime_routes["enp3s0"]] == ["10.0.0.0/8"]
+
+
+def test_routes_applied_after_connection_is_up(world):
+    """Áp route trước khi thiết bị lên là vô nghĩa."""
+    network, proxy, lan, _ = world
+    profile = new_profile(
+        "X",
+        bindings=[Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid, routes=[route()])],
+    )
+    run(make_applier(network, proxy), profile)
+
+    ops = network.operations()
+    assert ops.index("activate") < ops.index("routes")
+
+
+def test_no_routes_means_step_skipped(world):
+    network, proxy, lan, _ = world
+    profile = new_profile(
+        "X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid)]
+    )
+    report, _ = run(make_applier(network, proxy), profile)
+    assert report.step("routes").status is StepStatus.SKIPPED
+    assert "routes" not in network.operations()
+
+
+def test_route_failure_rolls_back(world):
+    network, proxy, lan, _ = world
+    network.fail["routes"] = "reapply bị từ chối"
+    profile = new_profile(
+        "X",
+        bindings=[Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid, routes=[route()])],
+    )
+    report, _ = run(make_applier(network, proxy), profile)
+
+    assert not report.ok and report.rolled_back
+    assert report.step("routes").status is StepStatus.FAILED
+
+
+def test_rollback_restores_touched_interfaces(world):
+    """Bước sau route hỏng thì route đã áp phải được gỡ."""
+    network, proxy, lan, _ = world
+    network._snapshot.wifi_enabled = True
+    network.fail["wifi"] = "rfkill"
+    profile = new_profile(
+        "X",
+        bindings=[Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid, routes=[route()])],
+        wifi_enabled=False,          # bước radio_off chạy SAU routes và sẽ hỏng
+    )
+    report, _ = run(make_applier(network, proxy), profile)
+
+    assert report.rolled_back
+    assert ("restore", "enp3s0") in network.calls
+    assert "enp3s0" not in network.runtime_routes
+
+
+def test_routes_skipped_for_disconnected_device(world):
+    """Thiết bị chưa lên thì không áp route — reapply sẽ thất bại."""
+    network, proxy, _lan, wifi_home = world
+    profile = new_profile(
+        "X",
+        bindings=[
+            Binding("enp3s0", BindingAction.LEAVE_ALONE, routes=[route()]),
+            Binding("wlp2s0", BindingAction.ACTIVATE, wifi_home.uuid),
+        ],
+    )
+    report, _ = run(make_applier(network, proxy), profile)
+    assert report.ok
+    assert "enp3s0" not in network.runtime_routes
+
+
+def test_activate_targets_the_interface_named_by_binding(world):
+    """Lỗi thật: profile không ghim interface-name mà để NM tự chọn thì nó giữ
+    nguyên connection ở cổng cũ — người dùng bấm áp dụng mà không thấy gì đổi."""
+    network, proxy, lan, _ = world
+    profile = new_profile(
+        "X", bindings=[Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid)]
+    )
+    run(make_applier(network, proxy), profile)
+
+    call = next(c for c in network.calls if c[0] == "activate")
+    assert call == ("activate", lan.uuid)
+    # Interface phải được truyền xuống, không để None.
+    assert network.last_activate_interface == "enp3s0"
+
+
+def test_verify_waits_even_without_explicit_connection(world):
+    """Lỗi thật: binding kiểu công tắc (uuid=None) làm verify bỏ qua, route bị
+    áp lúc thiết bị còn CONNECTING nên trượt âm thầm mà vẫn báo thành công."""
+    network, proxy, _lan, _ = world
+    network.activation_hangs = True
+    profile = new_profile(
+        "X",
+        bindings=[Binding("enp3s0", BindingAction.ACTIVATE, None, routes=[route()])],
+    )
+    report, _ = run(ProfileApplier(network, proxy, schedule=ImmediateScheduler(200)), profile)
+
+    assert not report.ok
+    assert report.step("verify").status is StepStatus.FAILED
+
+
+def test_routes_applied_when_binding_has_no_connection(world):
+    network, proxy, _lan, _ = world
+    profile = new_profile(
+        "X",
+        bindings=[Binding("enp3s0", BindingAction.ACTIVATE, None, routes=[route()])],
+    )
+    report, _ = run(make_applier(network, proxy), profile)
+
+    assert report.ok, report.summary()
+    assert report.step("verify").status is StepStatus.OK
+    assert [r.cidr for r in network.runtime_routes["enp3s0"]] == ["10.0.0.0/8"]
+
+
+def test_rollback_restores_connection_to_its_original_device(world):
+    """Lỗi thật: khôi phục với device=None khiến profile không ghim interface
+    bị NM gán sang cổng khác — rollback đá văng đúng thiết bị vừa lên."""
+    network, proxy, lan, wifi_home = world
+    network.fail["routes"] = "hỏng"
+    profile = new_profile(
+        "X",
+        bindings=[
+            Binding("wlp2s0", BindingAction.DISCONNECT),
+            Binding("enp3s0", BindingAction.ACTIVATE, lan.uuid, routes=[route()]),
+        ],
+    )
+    run(make_applier(network, proxy), profile)
+
+    restore_calls = [
+        c for c in network.calls if c[0] == "activate" and c[1] == wifi_home.uuid
+    ]
+    assert restore_calls, "không khôi phục kết nối Wi-Fi đã ngắt"
+    assert network.last_activate_interface == "wlp2s0"

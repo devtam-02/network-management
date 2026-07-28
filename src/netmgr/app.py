@@ -60,6 +60,7 @@ class NetmgrApp(Adw.Application):
         self._profiles: ProfileService | None = None
         self._window = None
         self._show_window_on_start = show_window
+        self._first_activate = True
         self._apply_progress = None
 
     # ── vòng đời ────────────────────────────────────────────────────────────
@@ -107,10 +108,24 @@ class NetmgrApp(Adw.Application):
         # `hold()` giữ app sống khi không có cửa sổ nào — tray là giao diện
         # chính, đóng cửa sổ không được làm thoát app.
         self.hold()
-        if self._show_window_on_start:
-            self.open_window()
+
+        if self._first_activate:
+            self._first_activate = False
+            # Khởi động nền (autostart, `netmgr tray`): chỉ hiện tray.
+            if not self._show_window_on_start:
+                return
+
+        # Mọi lần kích hoạt SAU ĐÓ đều mở cửa sổ. Đây là lúc người dùng bấm vào
+        # app trong menu ứng dụng hoặc gõ `netmgr` lần nữa: tiến trình thứ hai
+        # chỉ đánh thức tiến trình đang chạy, nên nếu không mở cửa sổ ở đây thì
+        # bấm vào icon app sẽ không có gì xảy ra.
+        self.open_window()
 
     def do_shutdown(self) -> None:
+        # Route của Bộ cấu hình chỉ sống ở runtime; trả máy về cấu hình gốc
+        # trước khi thoát để không để lại dấu vết nào.
+        if self._profiles is not None:
+            self._profiles.restore_all()
         if self._tray is not None:
             self._tray.close()
         if self._facade is not None:
@@ -215,7 +230,8 @@ class NetmgrApp(Adw.Application):
         self.refresh()
 
     def clear_profile(self) -> None:
-        self._profiles.clear_active()
+        result = self._profiles.clear_active()
+        self._toast(result.message or "Đã bỏ Bộ cấu hình")
         self.refresh()
 
     def capture_profile_prompt(self) -> None:
@@ -242,33 +258,10 @@ class NetmgrApp(Adw.Application):
         self._facade.set_wifi_enabled(enabled, self._on_op_done)
 
     def activate_connection(self, uuid: str) -> None:
-        self._facade.activate_connection(uuid, self._on_op_done)
+        self._facade.activate_connection(uuid, None, self._on_op_done)
 
     def deactivate_connection(self, uuid: str) -> None:
         self._facade.deactivate_connection(uuid, self._on_op_done)
-
-    def delete_connection(self, uuid: str) -> None:
-        self._facade.delete_connection(uuid, self._on_delete_done)
-
-    def save_ipv4(self, uuid: str, config, *, apply_now: bool) -> None:
-        """Ghi cấu hình IPv4/route (P4)."""
-        self._facade.save_ipv4(
-            uuid, config, apply_now=apply_now, callback=self._on_save_ipv4_done
-        )
-
-    def _on_save_ipv4_done(self, result: OpResult) -> None:
-        # Thành công cũng phải báo: thông điệp phân biệt "đã áp dụng ngay" với
-        # "sẽ có hiệu lực ở lần kết nối sau" — người dùng cần biết khác biệt đó.
-        self._toast(result.message or ("Đã lưu" if result.ok else "Lưu thất bại"))
-        self.refresh()
-
-    def _on_delete_done(self, result: OpResult) -> None:
-        if result.ok:
-            self._toast("Đã xoá cấu hình")
-            # Đang đứng ở trang chi tiết của thứ vừa bị xoá thì phải lùi ra.
-            if self._window is not None:
-                self._window.pop_to_root()
-        self._on_op_done(result)
 
     def _on_op_done(self, result: OpResult) -> None:
         """Thất bại phải nói ra — nuốt im lặng là kiểu hỏng khó chịu nhất."""

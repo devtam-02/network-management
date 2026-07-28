@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Test
+.pytest_cache/
+.coverage
+
+# Môi trường ảo (dự án dùng gói hệ thống, nhưng phòng khi ai đó tạo)
+.venv/
+venv/

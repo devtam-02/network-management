@@ -25,13 +25,21 @@ class RouteEditor(Adw.Dialog):
         *,
         existing: list[Ipv4Route],
         local_subnets: list[Ipv4Address],
-        on_save: Callable[[Ipv4Route], None],
+        on_save,
+        devices: list[tuple[str, str]] | None = None,
+        current_device: str | None = None,
     ) -> None:
+        """
+        devices: [(interface, nhãn hiển thị)] — có thì hiện ô chọn thiết bị và
+            `on_save(route, interface)`. Không có thì `on_save(route)`.
+        """
         super().__init__()
         self._original = route
         self._existing = existing
         self._local_subnets = local_subnets
         self._on_save = on_save
+        self._devices = devices or []
+        self._current_device = current_device
 
         self.set_title("Sửa route" if route else "Thêm route")
         self.set_content_width(520)
@@ -54,6 +62,22 @@ class RouteEditor(Adw.Dialog):
         page.add(quick)
 
         main = Adw.PreferencesGroup(title="Route")
+
+        self._device_row = None
+        if self._devices:
+            # Đặt ngay đầu: chọn đi qua thiết bị nào là quyết định đầu tiên
+            # người dùng cần đưa ra khi máy có nhiều đường mạng.
+            self._device_row = Adw.ComboRow(
+                title="Đi qua",
+                model=Gtk.StringList.new([label for _i, label in self._devices]),
+                selected=next(
+                    (i for i, (iface, _l) in enumerate(self._devices)
+                     if iface == self._current_device),
+                    0,
+                ),
+            )
+            main.add(self._device_row)
+
         self._dest = Adw.EntryRow(title="Địa chỉ đích")
         self._prefix = Adw.SpinRow.new_with_range(0, 32, 1)
         self._prefix.set_title("Prefix")
@@ -176,5 +200,10 @@ class RouteEditor(Adw.Dialog):
             self._validate()
 
     def _on_save_clicked(self) -> None:
-        self._on_save(self._collect())
+        route = self._collect()
+        if self._device_row is not None:
+            iface = self._devices[self._device_row.get_selected()][0]
+            self._on_save(route, iface)
+        else:
+            self._on_save(route)
         self.close()
