@@ -15,7 +15,14 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gtk  # noqa: E402
 
 from ..domain.models import Ipv4Address, Ipv4Route
-from ..domain.validators import Severity, parse_route_line, validate_route
+from ..domain.validators import (
+    DEFAULT_NETMASK,
+    Severity,
+    netmask_to_prefix,
+    parse_route_line,
+    prefix_to_netmask,
+    validate_route,
+)
 
 
 class RouteEditor(Adw.Dialog):
@@ -82,9 +89,11 @@ class RouteEditor(Adw.Dialog):
             main.add(self._device_row)
 
         self._dest = Adw.EntryRow(title="Địa chỉ đích")
-        self._prefix = Adw.SpinRow.new_with_range(0, 32, 1)
-        self._prefix.set_title("Prefix")
-        self._next_hop = Adw.EntryRow(title="Gateway (để trống nếu on-link)")
+        # Netmask, không phải prefix: Cài đặt của Ubuntu hiển thị route theo dạng
+        # này và người dùng mạng doanh nghiệp quen nghĩ theo netmask. Vẫn nhận cả
+        # dạng prefix ("8") cho ai muốn gõ nhanh.
+        self._netmask = Adw.EntryRow(title="Netmask")
+        self._next_hop = Adw.EntryRow(title="Gateway")
         self._metric = Adw.SpinRow.new_with_range(-1, 4294967295, 1)
         self._metric.set_title("Metric (-1 = mặc định)")
         self._table = Adw.SpinRow.new_with_range(0, 4294967295, 1)
@@ -93,25 +102,25 @@ class RouteEditor(Adw.Dialog):
             title="On-link",
             subtitle="Gateway nằm trực tiếp trên liên kết dù không cùng subnet",
         )
-        for row in (self._dest, self._prefix, self._next_hop, self._metric,
+        for row in (self._dest, self._netmask, self._next_hop, self._metric,
                     self._table, self._onlink):
             main.add(row)
         page.add(main)
 
         if route is not None:
             self._dest.set_text(route.dest)
-            self._prefix.set_value(route.prefix)
+            self._netmask.set_text(prefix_to_netmask(route.prefix))
             self._next_hop.set_text(route.next_hop or "")
             self._metric.set_value(-1 if route.metric is None else route.metric)
             self._table.set_value(route.table or 0)
             self._onlink.set_active(route.onlink)
         else:
-            self._prefix.set_value(24)
+            self._netmask.set_text(DEFAULT_NETMASK)
             self._metric.set_value(-1)
 
-        for widget in (self._dest, self._next_hop):
+        for widget in (self._dest, self._netmask, self._next_hop):
             widget.connect("changed", lambda _w: self._validate())
-        for widget in (self._prefix, self._metric, self._table):
+        for widget in (self._metric, self._table):
             widget.connect("notify::value", lambda *_a: self._validate())
         self._onlink.connect("notify::active", lambda *_a: self._validate())
 
@@ -145,7 +154,7 @@ class RouteEditor(Adw.Dialog):
         if route is None:
             return
         self._dest.set_text(route.dest)
-        self._prefix.set_value(route.prefix)
+        self._netmask.set_text(prefix_to_netmask(route.prefix))
         self._next_hop.set_text(route.next_hop or "")
         self._metric.set_value(-1 if route.metric is None else route.metric)
         self._table.set_value(route.table or 0)
@@ -157,9 +166,10 @@ class RouteEditor(Adw.Dialog):
     def _collect(self) -> Ipv4Route:
         metric = int(self._metric.get_value())
         table = int(self._table.get_value())
+        prefix = netmask_to_prefix(self._netmask.get_text())
         return Ipv4Route(
             dest=self._dest.get_text().strip(),
-            prefix=int(self._prefix.get_value()),
+            prefix=32 if prefix is None else prefix,
             next_hop=self._next_hop.get_text().strip() or None,
             metric=None if metric < 0 else metric,
             table=table or None,
@@ -168,6 +178,28 @@ class RouteEditor(Adw.Dialog):
         )
 
     def _validate(self) -> None:
+        # Hai luật riêng của form, không đặt ở domain: `parse_route_line` phải
+        # đọc được dạng một dòng đang nằm trong file cấu hình, kể cả route
+        # on-link không gateway.
+        if netmask_to_prefix(self._netmask.get_text()) is None:
+            self._save_button.set_sensitive(False)
+            self._show_banner(
+                f"'{self._netmask.get_text().strip()}' không phải netmask hợp lệ. "
+                f"Ví dụ: {DEFAULT_NETMASK}, 255.255.0.0, 255.255.255.0 — hoặc gõ "
+                "số prefix như 8.",
+                suggestion=None,
+            )
+            return
+
+        if not self._next_hop.get_text().strip() and not self._onlink.get_active():
+            self._save_button.set_sensitive(False)
+            self._show_banner(
+                "Thiếu gateway. Điền địa chỉ gateway, hoặc bật On-link nếu đích "
+                "nằm trực tiếp trên liên kết.",
+                suggestion=None,
+            )
+            return
+
         result = validate_route(
             self._collect(),
             existing=self._existing,

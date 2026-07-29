@@ -441,3 +441,48 @@ def test_tu_choi_pac_rong(service, tmp_path):
     config = service.get(BUILTIN_ID)
     config.pac_url = (tmp_path / "x.pac").as_uri()
     assert not service.save_pac_content(BUILTIN_ID, "   ").ok
+
+
+# ── bắt lỗi PAC thất bại im lặng ─────────────────────────────────────────────
+
+
+def test_tu_choi_isinnet_voi_ten_mien(service, tmp_path):
+    """Đo trên máy thật: isInNet(host, "*.viettel.com.vn", "255.255.255.0") làm
+    google.com đi qua proxy còn vas.viettel.com.vn đi thẳng — ngược hoàn toàn, và
+    không có thông báo lỗi ở bất kỳ đâu."""
+    service.get(BUILTIN_ID).pac_url = (tmp_path / "x.pac").as_uri()
+    body = (
+        'function FindProxyForURL(url, host) {\n'
+        '    if (isInNet(host, "*.viettel.com.vn", "255.255.255.0")) {\n'
+        '        return "PROXY 10.254.148.131:8800";\n'
+        '    }\n'
+        '    return "DIRECT";\n'
+        '}\n'
+    )
+    result = service.save_pac_content(BUILTIN_ID, body)
+    assert not result.ok
+    assert "dnsDomainIs" in result.message
+    assert "Dòng 2" in result.message
+
+
+def test_chap_nhan_isinnet_voi_dai_ip(service, tmp_path):
+    service.get(BUILTIN_ID).pac_url = (tmp_path / "x.pac").as_uri()
+    body = (
+        'function FindProxyForURL(url, host) {\n'
+        '    if (isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0")) {\n'
+        '        return "DIRECT";\n'
+        '    }\n'
+        '    return "DIRECT";\n'
+        '}\n'
+    )
+    assert service.save_pac_content(BUILTIN_ID, body).ok
+
+
+def test_bo_qua_isinnet_trong_comment(service, tmp_path):
+    """Chú thích hướng dẫn có nêu ví dụ sai — không được coi là lỗi."""
+    service.get(BUILTIN_ID).pac_url = (tmp_path / "x.pac").as_uri()
+    body = (
+        '// sai: isInNet(host, "*.example.com", "255.255.255.0")\n'
+        'function FindProxyForURL(url, host) { return "DIRECT"; }\n'
+    )
+    assert service.save_pac_content(BUILTIN_ID, body).ok

@@ -1,20 +1,27 @@
-// Cấu hình mặc định của netmgr — sửa file này để đổi cách chọn proxy.
+// Cấu hình proxy mặc định của netmgr.
 //
-// PAC (Proxy Auto-Config) là một hàm JavaScript. Trình duyệt và các ứng dụng
-// tôn trọng cài đặt proxy của hệ thống sẽ gọi nó cho MỖI địa chỉ, rồi đi theo
-// thứ tự nó trả về:
+// LƯU Ý về việc chọn hàm — đây là chỗ dễ sai nhất và sai thì KHÔNG báo lỗi gì,
+// PAC vẫn chạy và chỉ trả về kết quả không như mong đợi:
 //
-//   "DIRECT"                    đi thẳng, không qua proxy
-//   "PROXY 10.0.0.1:3128"       đi qua proxy này
-//   "PROXY a:3128; DIRECT"      thử proxy trước, không được thì đi thẳng
+//   so khớp TÊN MIỀN  ->  dnsDomainIs(host, ".viettel.com.vn")
+//                         shExpMatch(host, "*.viettel.com.vn")
+//   so khớp DẢI IP    ->  isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0")
 //
-// Mặc định dưới đây cho MỌI thứ đi thẳng, tức chưa proxy gì cả. Hãy thay
-// PROXY_SERVER và bỏ comment các nhánh bạn cần.
+// `isInNet` so sánh ĐỊA CHỈ IP với địa chỉ mạng + netmask. Truyền tên miền hoặc
+// wildcard vào nó, ví dụ isInNet(host, "*.viettel.com.vn", "255.255.255.0"),
+// sẽ cho kết quả vô nghĩa: đo trên máy này thì google.com bị đẩy qua proxy còn
+// vas.viettel.com.vn lại đi thẳng — đúng ngược lại ý muốn.
+//
+// Giá trị trả về:
+//   "DIRECT"                     đi thẳng, không qua proxy
+//   "PROXY 10.0.0.1:8800"        đi qua proxy này
+//   "PROXY 10.0.0.1:8800; DIRECT" thử proxy trước, không được thì đi thẳng
 
-var PROXY_SERVER = "PROXY 127.0.0.1:3128";
+var PROXY_SERVER = "PROXY 10.254.148.131:8800";
 
 function FindProxyForURL(url, host) {
-    // Địa chỉ nội bộ: luôn đi thẳng. Đưa qua proxy chỉ làm chậm và dễ hỏng.
+    // Tên máy không có dấu chấm (vd "wiki") và dải nội bộ: luôn đi thẳng.
+    // Đẩy qua proxy chỉ làm chậm và dễ hỏng.
     if (isPlainHostName(host)
         || shExpMatch(host, "*.local")
         || isInNet(dnsResolve(host), "127.0.0.0", "255.0.0.0")
@@ -24,11 +31,11 @@ function FindProxyForURL(url, host) {
         return "DIRECT";
     }
 
-    // Ví dụ: chỉ định tuyến một số miền qua proxy.
-    // if (shExpMatch(host, "*.example.com")) {
-    //     return PROXY_SERVER;
-    // }
+    // Các miền cần đi qua proxy.
+    if (dnsDomainIs(host, ".viettel.com.vn") || host === "viettel.com.vn") {
+        return PROXY_SERVER;
+    }
 
-    // Còn lại đi thẳng. Đổi thành PROXY_SERVER nếu muốn mọi thứ qua proxy.
+    // Còn lại đi thẳng.
     return "DIRECT";
 }

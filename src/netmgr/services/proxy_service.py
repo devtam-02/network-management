@@ -12,6 +12,7 @@ bằng layer giả.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -113,6 +114,16 @@ class ProxyService:
         if "FindProxyForURL" not in text:
             # PAC không có hàm này thì mọi ứng dụng sẽ lặng lẽ bỏ qua nó.
             return OpResult(False, "File PAC phải có hàm FindProxyForURL(url, host)")
+
+        misuse = _isinnet_misuse(text)
+        if misuse:
+            return OpResult(
+                False,
+                f"Dòng {misuse[0]}: isInNet so sánh ĐỊA CHỈ IP với netmask, không "
+                f"nhận tên miền như '{misuse[1]}'. PAC vẫn chạy nhưng cho kết quả "
+                "sai và không báo lỗi gì. Dùng dnsDomainIs(host, \".ten.mien\") "
+                "hoặc shExpMatch(host, \"*.ten.mien\") để so khớp tên miền.",
+            )
 
         path = Path(config.pac_path)
         try:
@@ -304,3 +315,25 @@ class ProxyService:
 
     def _persist(self) -> None:
         self._store.save(self._configs, self._active_id)
+
+
+#: Đối số thứ hai của `isInNet` phải là địa chỉ IPv4 (hoặc biến chứa nó).
+_ISINNET = re.compile(r"isInNet\s*\([^,)]+,\s*[\"\']([^\"\']+)[\"\']")
+
+
+def _isinnet_misuse(text: str) -> tuple[int, str] | None:
+    """Tìm `isInNet(..., "<không phải IP>", ...)` — lỗi thất bại IM LẶNG.
+
+    Đo được trên máy thật với `isInNet(host, "*.viettel.com.vn", "255.255.255.0")`:
+    google.com bị đẩy qua proxy còn vas.viettel.com.vn lại đi thẳng, đúng ngược
+    lại ý muốn. Không có thông báo lỗi nào ở bất kỳ đâu.
+    """
+    for number, line in enumerate(text.splitlines(), start=1):
+        code = line.split("//", 1)[0]
+        for match in _ISINNET.finditer(code):
+            pattern = match.group(1)
+            octets = pattern.split(".")
+            if len(octets) == 4 and all(o.isdigit() and int(o) <= 255 for o in octets):
+                continue
+            return number, pattern
+    return None

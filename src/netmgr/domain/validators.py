@@ -176,6 +176,16 @@ def validate_route(
 
     # ── next_hop ────────────────────────────────────────────────────────────
     hop_addr = None
+    if not route.next_hop and not route.onlink:
+        # CẢNH BÁO, không phải lỗi: route on-link là hợp lệ và `parse_route_line`
+        # phải đọc được dạng một dòng "10.0.0.0/8" đang nằm trong file cấu hình.
+        # Form thêm/sửa route mới là chỗ chặn cứng (xem `ui/route_editor.py`).
+        r.warn(
+            "next_hop",
+            "Không có gateway → route on-link: chỉ đúng khi đích nằm trực tiếp "
+            "trên liên kết.",
+        )
+
     if route.next_hop:
         hop_addr = parse_ipv4(route.next_hop)
         if hop_addr is None:
@@ -422,3 +432,57 @@ def validate_proxy(cfg: ProxyConfig) -> ValidationResult:
             break
 
     return r
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Netmask ↔ prefix
+#
+# Cài đặt của Ubuntu hiển thị route theo dạng Netmask, và người dùng mạng doanh
+# nghiệp quen nghĩ theo netmask hơn là prefix. Nhưng NetworkManager và kernel chỉ
+# nhận prefix, nên phải chuyển đổi hai chiều.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Netmask mặc định khi thêm route mới.
+DEFAULT_NETMASK = "255.0.0.0"
+
+
+def prefix_to_netmask(prefix: int) -> str:
+    if not 0 <= prefix <= 32:
+        return ""
+    bits = (0xFFFFFFFF << (32 - prefix)) & 0xFFFFFFFF if prefix else 0
+    return ".".join(str((bits >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+
+
+def netmask_to_prefix(text: str) -> int | None:
+    """Nhận cả "255.255.0.0" và "16". `None` nếu không hợp lệ.
+
+    Netmask phải là dãy bit 1 liền nhau rồi toàn 0: 255.255.254.0 hợp lệ, còn
+    255.0.255.0 thì không — kernel không có cách nào biểu diễn nó bằng prefix.
+    """
+    raw = text.strip()
+    if not raw:
+        return None
+
+    if raw.isdigit():
+        prefix = int(raw)
+        return prefix if 0 <= prefix <= 32 else None
+
+    parts = raw.split(".")
+    if len(parts) != 4:
+        return None
+    try:
+        octets = [int(p) for p in parts]
+    except ValueError:
+        return None
+    if any(not 0 <= o <= 255 for o in octets):
+        return None
+
+    bits = 0
+    for octet in octets:
+        bits = (bits << 8) | octet
+    if bits == 0:
+        return 0
+    inverted = ~bits & 0xFFFFFFFF
+    if inverted & (inverted + 1):
+        return None         # có bit 1 xen giữa các bit 0 → không phải netmask
+    return 32 - inverted.bit_length()

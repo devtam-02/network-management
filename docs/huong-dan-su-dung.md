@@ -238,11 +238,33 @@ Nhưng **proxy vẫn tắt** cho tới khi bạn tự bấm *Dùng* — có sẵ
 đang bật.
 
 Cấu hình này **không xoá được** và không sửa được tên/chế độ. Thứ duy nhất sửa
-được là **nội dung file PAC**: bấm biểu tượng 📄 ở hàng của nó. File PAC là một
-hàm JavaScript `FindProxyForURL(url, host)` trả về `"DIRECT"` hoặc
-`"PROXY host:port"`; bản mặc định cho mọi thứ đi thẳng, kèm chú thích tiếng Việt
-để bạn sửa theo nhu cầu. App từ chối lưu nếu thiếu hàm đó, vì khi ấy mọi ứng
-dụng sẽ lặng lẽ bỏ qua file.
+được là **nội dung file PAC**: bấm biểu tượng 📄 ở hàng của nó.
+
+PAC là một hàm JavaScript `FindProxyForURL(url, host)` trả về `"DIRECT"` hoặc
+`"PROXY host:port"`. Chọn đúng hàm so khớp là chỗ dễ sai nhất:
+
+| Muốn so khớp | Dùng |
+|---|---|
+| Tên miền | `dnsDomainIs(host, ".viettel.com.vn")` hoặc `shExpMatch(host, "*.viettel.com.vn")` |
+| Dải IP | `isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0")` |
+
+`isInNet` so sánh **địa chỉ IP với netmask**, không nhận tên miền. Truyền tên miền
+vào nó — ví dụ `isInNet(host, "*.viettel.com.vn", "255.255.255.0")` — cho kết quả
+vô nghĩa mà **không báo lỗi ở bất kỳ đâu**. Đo trên máy thật: `google.com` bị đẩy
+qua proxy còn `vas.viettel.com.vn` lại đi thẳng, đúng ngược lại ý muốn. App phát
+hiện và từ chối lưu kiểu viết này, cũng như khi thiếu `FindProxyForURL`.
+
+**Kiểm tra PAC có ăn không:**
+
+```bash
+python3 -c "
+from gi.repository import Gio
+r = Gio.ProxyResolver.get_default()
+for u in ['http://vas.viettel.com.vn/', 'http://google.com/']:
+    print(u, '->', r.lookup(u, None))"
+```
+
+Đây chính là bộ giải mà các ứng dụng GNOME dùng, nên kết quả nó trả về là sự thật.
 
 ### 5.1.1 Route riêng của Bộ cấu hình
 
@@ -250,6 +272,11 @@ Mục **Route riêng** trong hộp thoại sửa cho phép mỗi Bộ cấu hìn
 của riêng nó. Chọn route đi qua thiết bị nào, và các route này **chỉ tồn tại
 trong lúc Bộ cấu hình đang bật** — tắt app hoặc chọn *Không dùng Bộ cấu hình* là
 máy trở về đúng cấu hình gốc.
+
+Form thêm/sửa route dùng **Netmask** (mặc định `255.0.0.0`) giống bảng Routes
+trong Cài đặt của Ubuntu — vẫn gõ được dạng prefix như `8` nếu bạn quen thế.
+**Gateway là bắt buộc**; nếu đích nằm trực tiếp trên liên kết thì bật *On-link*
+để khai rõ.
 
 Mỗi route có **công tắc bật/tắt** riêng. Tắt là *tạm không áp*, không phải xoá —
 route vẫn nằm trong Bộ cấu hình và bật lại được mà không phải gõ lại.

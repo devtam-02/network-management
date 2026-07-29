@@ -81,8 +81,13 @@ class GSettingsLayer(ProxyLayer):
 
         try:
             if config.mode is ProxyMode.MANUAL:
+                # Xoá autoconfig-url: để lại thì GNOME Settings hiện một URL PAC
+                # không còn dùng, trông như cấu hình đang lẫn hai chế độ.
+                root.set_string("autoconfig-url", "")
                 self._apply_manual(config, password)
             elif config.mode is ProxyMode.AUTO:
+                # Xoá host/port của lần MANUAL trước, cùng lý do như trên.
+                self._clear_endpoints()
                 root.set_string("autoconfig-url", config.pac_url)
             else:
                 self._clear_endpoints()
@@ -128,13 +133,25 @@ class GSettingsLayer(ProxyLayer):
             http.set_string("authentication-password", "")
 
     def clear(self) -> OpResult:
+        """Tắt proxy — CHỈ đổi `mode`, giữ nguyên host/port/autoconfig-url.
+
+        Trước đây hàm này xoá sạch mọi trường. Hệ quả: tắt proxy xong mở Cài đặt
+        của Ubuntu thì thấy các ô trống trơn, trông như cấu hình đã mất. Trong
+        gsettings, `mode = none` là đủ để proxy không có hiệu lực; các trường
+        khác chỉ là dữ liệu nằm chờ, và giữ chúng lại giúp bật lại thấy nguyên.
+
+        Ngoại lệ duy nhất là MẬT KHẨU: nó là bí mật, không có lý do gì để nằm
+        trong dconf khi proxy đang tắt. Nguồn lưu bền là libsecret, nên bật lại
+        vẫn có (xem `_apply_manual`).
+        """
         root = self._settings()
         if root is None:
             return OpResult(False, f"Không tìm thấy schema {SCHEMA}")
         try:
             root.set_string("mode", "none")
-            root.set_string("autoconfig-url", "")
-            self._clear_endpoints()
+            http = self._children.get("http")
+            if http is not None:
+                http.set_string("authentication-password", "")
             Gio.Settings.sync()
         except GLib.Error as exc:
             return OpResult.failure(exc, "Tắt proxy desktop")

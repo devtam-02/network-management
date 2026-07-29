@@ -6,6 +6,9 @@ import pytest
 
 from netmgr.domain.models import Ipv4Address, Ipv4Route, ProxyConfig, ProxyEndpoint, ProxyMode
 from netmgr.domain.validators import (
+    DEFAULT_NETMASK,
+    netmask_to_prefix,
+    prefix_to_netmask,
     format_route_line,
     normalize_route,
     parse_ipv4,
@@ -368,3 +371,55 @@ def test_proxy_name_required():
 def test_proxy_ignore_hosts_injection_rejected():
     cfg = P(mode=ProxyMode.NONE, ignore_hosts=["localhost", "evil`id`"])
     assert not validate_proxy(cfg).ok
+
+
+# ── netmask ↔ prefix ─────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("prefix,netmask", [
+    (0, "0.0.0.0"),
+    (8, "255.0.0.0"),
+    (16, "255.255.0.0"),
+    (23, "255.255.254.0"),
+    (24, "255.255.255.0"),
+    (32, "255.255.255.255"),
+])
+def test_prefix_netmask_doi_duoc_hai_chieu(prefix, netmask):
+    assert prefix_to_netmask(prefix) == netmask
+    assert netmask_to_prefix(netmask) == prefix
+
+
+def test_netmask_nhan_ca_dang_prefix():
+    """Gõ "8" nhanh hơn gõ "255.0.0.0"."""
+    assert netmask_to_prefix("8") == 8
+    assert netmask_to_prefix(" 24 ") == 24
+
+
+@pytest.mark.parametrize("bad", [
+    "",
+    "255.0.255.0",      # bit 1 xen giữa bit 0 — kernel không biểu diễn được
+    "255.255.255",
+    "300.0.0.0",
+    "33",
+    "abc",
+])
+def test_netmask_khong_hop_le(bad):
+    assert netmask_to_prefix(bad) is None
+
+
+def test_netmask_mac_dinh_la_255_0_0_0():
+    assert DEFAULT_NETMASK == "255.0.0.0"
+    assert netmask_to_prefix(DEFAULT_NETMASK) == 8
+
+
+def test_route_khong_gateway_chi_canh_bao_khong_chan():
+    """`parse_route_line` phải đọc được dạng một dòng on-link đang nằm trong file
+    cấu hình; form mới là chỗ chặn cứng."""
+    result = validate_route(Ipv4Route("10.0.0.0", 8))
+    assert result.ok
+    assert any("on-link" in i.message for i in result.warnings)
+
+
+def test_route_on_link_khai_ro_thi_khong_canh_bao():
+    result = validate_route(Ipv4Route("10.0.0.0", 8, onlink=True))
+    assert not any("on-link" in i.message for i in result.warnings)
