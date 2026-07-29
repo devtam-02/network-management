@@ -31,6 +31,9 @@ class ValidationIssue:
     severity: Severity = Severity.ERROR
     #: Giá trị sửa sẵn để UI hiện nút "Sửa giúp tôi" (vd: snap về network address)
     suggestion: str | None = None
+    #: Prefix sửa sẵn, khi cách sửa đúng là đổi netmask chứ không đổi địa chỉ.
+    #: Có cả hai thì UI ưu tiên cách GIỮ được thứ người dùng vừa gõ.
+    suggested_prefix: int | None = None
 
 
 @dataclass(slots=True)
@@ -50,11 +53,21 @@ class ValidationResult:
     def warnings(self) -> list[ValidationIssue]:
         return [i for i in self.issues if i.severity is Severity.WARNING]
 
-    def error(self, fld: str, msg: str, suggestion: str | None = None) -> None:
-        self.issues.append(ValidationIssue(fld, msg, Severity.ERROR, suggestion))
+    def error(
+        self, fld: str, msg: str, suggestion: str | None = None,
+        suggested_prefix: int | None = None,
+    ) -> None:
+        self.issues.append(
+            ValidationIssue(fld, msg, Severity.ERROR, suggestion, suggested_prefix)
+        )
 
-    def warn(self, fld: str, msg: str, suggestion: str | None = None) -> None:
-        self.issues.append(ValidationIssue(fld, msg, Severity.WARNING, suggestion))
+    def warn(
+        self, fld: str, msg: str, suggestion: str | None = None,
+        suggested_prefix: int | None = None,
+    ) -> None:
+        self.issues.append(
+            ValidationIssue(fld, msg, Severity.WARNING, suggestion, suggested_prefix)
+        )
 
     def extend(self, other: ValidationResult) -> None:
         self.issues.extend(other.issues)
@@ -167,11 +180,18 @@ def validate_route(
     if dest_addr is not None and 0 <= route.prefix <= 32:
         net = ipaddress.IPv4Network(f"{dest_addr}/{route.prefix}", strict=False)
         if net.network_address != dest_addr:
+            # Hai cách sửa, và chúng nghĩa khác nhau hoàn toàn:
+            #   /32                      -> route tới ĐÚNG MỘT máy
+            #   snap về network address  -> route tới CẢ DẢI mạng
+            # Gõ đủ bốn octet của một địa chỉ máy gần như luôn là muốn cách đầu,
+            # nên nêu nó trước và để UI mặc định chọn nó — giữ được thứ vừa gõ.
             r.error(
                 "dest",
-                f"{dest_addr}/{route.prefix} không phải địa chỉ mạng — "
-                f"ý bạn là {net.network_address}/{route.prefix}?",
+                f"{dest_addr}/{route.prefix} không phải địa chỉ mạng. "
+                f"Muốn route tới đúng máy này thì dùng netmask 255.255.255.255 "
+                f"(/32); muốn cả dải thì đổi đích thành {net.network_address}.",
                 suggestion=str(net.network_address),
+                suggested_prefix=32,
             )
 
     # ── next_hop ────────────────────────────────────────────────────────────

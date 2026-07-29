@@ -288,6 +288,12 @@ Form thêm/sửa route dùng **Netmask** (mặc định `255.0.0.0`) giống b�
 trong Cài đặt của Ubuntu — vẫn gõ được dạng prefix như `8` nếu bạn quen thế.
 Ô **Địa chỉ đích** nhận luôn dạng CIDR: gõ `169.255.187.72/32` thì `/32` tự
 chuyển sang ô Netmask.
+
+Route tới **một máy** cần netmask `255.255.255.255` (/32), không phải netmask mặc
+định. Gõ một địa chỉ đủ bốn octet với netmask rộng hơn sẽ bị chặn — vì
+`169.255.187.72/8` không phải địa chỉ mạng — và app hiện nút **Dùng /32** để sửa
+một nhát, giữ nguyên địa chỉ bạn vừa gõ. Nếu bạn thật sự muốn cả dải thì đổi đích
+thành `169.0.0.0`; hai thứ này nghĩa khác hẳn nhau.
 **Gateway là bắt buộc**; nếu đích nằm trực tiếp trên liên kết thì bật *On-link*
 để khai rõ.
 

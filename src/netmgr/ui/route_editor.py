@@ -93,6 +93,7 @@ class RouteEditor(Adw.Dialog):
         self._dest = Adw.EntryRow(title="Địa chỉ đích (nhận cả dạng /32)")
         #: Chặn vòng lặp khi `_absorb_cidr` tự sửa nội dung ô.
         self._syncing = False
+        self._suggested_prefix: int | None = None
         # Netmask, không phải prefix: Cài đặt của Ubuntu hiển thị route theo dạng
         # này và người dùng mạng doanh nghiệp quen nghĩ theo netmask. Vẫn nhận cả
         # dạng prefix ("8") cho ai muốn gõ nhanh.
@@ -236,6 +237,7 @@ class RouteEditor(Adw.Dialog):
         if not result.issues:
             self._banner.set_revealed(False)
             self._suggestion = None
+            self._suggested_prefix = None
             return
 
         # Ưu tiên hiện lỗi chặn; hết lỗi rồi mới hiện cảnh báo.
@@ -243,18 +245,36 @@ class RouteEditor(Adw.Dialog):
         self._show_banner(
             issue.message,
             suggestion=issue.suggestion,
+            suggested_prefix=issue.suggested_prefix,
             warning=issue.severity is Severity.WARNING,
         )
 
-    def _show_banner(self, text: str, *, suggestion: str | None, warning: bool = False) -> None:
+    def _show_banner(
+        self, text: str, *, suggestion: str | None,
+        suggested_prefix: int | None = None, warning: bool = False,
+    ) -> None:
         self._suggestion = suggestion
+        self._suggested_prefix = suggested_prefix
         self._banner.set_title(("⚠ " if warning else "") + text)
-        # Lỗi "không phải địa chỉ mạng" luôn kèm giá trị sửa sẵn — cho bấm một
-        # nút thay vì bắt người dùng tự tính lại.
-        self._banner.set_button_label("Sửa giúp tôi" if suggestion else "")
+
+        # Có cả hai cách sửa thì nút phải chọn cách GIỮ được thứ người dùng vừa
+        # gõ: đổi netmask sang /32. Đổi địa chỉ đích là xoá mất thông tin họ nhập
+        # và ý nghĩa route cũng khác hẳn (một máy vs cả dải).
+        if suggested_prefix is not None:
+            label = f"Dùng /{suggested_prefix}"
+        elif suggestion:
+            label = "Sửa giúp tôi"
+        else:
+            label = ""
+        self._banner.set_button_label(label)
         self._banner.set_revealed(True)
 
     def _apply_suggestion(self) -> None:
+        if self._suggested_prefix is not None:
+            self._netmask.set_text(prefix_to_netmask(self._suggested_prefix))
+            self._suggested_prefix = None
+            self._validate()
+            return
         if self._suggestion:
             self._dest.set_text(self._suggestion)
             self._validate()

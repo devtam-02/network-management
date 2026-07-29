@@ -423,3 +423,32 @@ def test_route_khong_gateway_chi_canh_bao_khong_chan():
 def test_route_on_link_khai_ro_thi_khong_canh_bao():
     result = validate_route(Ipv4Route("10.0.0.0", 8, onlink=True))
     assert not any("on-link" in i.message for i in result.warnings)
+
+
+# ── địa chỉ máy với netmask rộng ─────────────────────────────────────────────
+
+
+def test_dia_chi_may_voi_netmask_rong_neu_ca_hai_cach_sua():
+    """Netmask mặc định là 255.0.0.0, nên gõ một địa chỉ máy đủ bốn octet sẽ bị
+    chặn. Thông báo phải nêu cách GIỮ được địa chỉ đó, không chỉ cách phá nó."""
+    issue = validate_route(
+        Ipv4Route("169.255.187.72", 8, next_hop="10.207.154.254")
+    ).errors[0]
+
+    assert "255.255.255.255" in issue.message      # cách giữ địa chỉ
+    assert "169.0.0.0" in issue.message            # cách lấy cả dải
+    assert issue.suggested_prefix == 32
+    assert issue.suggestion == "169.0.0.0"
+
+
+def test_dia_chi_may_voi_32_thi_hop_le():
+    result = validate_route(
+        Ipv4Route("169.255.187.72", 32, next_hop="10.207.154.254")
+    )
+    assert result.ok, [i.message for i in result.errors]
+
+
+def test_dia_chi_mang_dung_thi_khong_bao_gi():
+    result = validate_route(Ipv4Route("169.0.0.0", 8, next_hop="10.207.154.254"))
+    assert result.ok
+    assert not result.errors
