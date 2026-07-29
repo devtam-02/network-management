@@ -390,6 +390,10 @@ class ProxyConfig:
     socks: ProxyEndpoint = field(default_factory=ProxyEndpoint)
     use_same_for_all: bool = True
     pac_url: str = ""
+    #: File PAC trên đĩa mà app quản lý. Tách khỏi `pac_url` vì URL có thể là
+    #: http://127.0.0.1 (do app tự phục vụ) trong khi thứ người dùng sửa vẫn là
+    #: file này.
+    pac_file: str = ""
     ignore_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_IGNORE_HOSTS))
     auth_enabled: bool = False
     username: str = ""
@@ -407,7 +411,9 @@ class ProxyConfig:
 
     @property
     def pac_path(self) -> str:
-        """Đường dẫn file PAC trên đĩa, "" nếu pac_url không phải file://."""
+        """Đường dẫn file PAC sửa được, "" nếu cấu hình không có file nào."""
+        if self.pac_file:
+            return self.pac_file
         if not self.pac_url.startswith("file://"):
             return ""
         from urllib.parse import unquote, urlparse

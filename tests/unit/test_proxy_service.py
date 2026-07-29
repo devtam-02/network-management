@@ -420,7 +420,7 @@ def test_khong_tao_lai_khi_da_co(service):
 def test_doc_va_ghi_duoc_noi_dung_pac(service, tmp_path, monkeypatch):
     pac = tmp_path / "x.pac"
     config = service.get(BUILTIN_ID)
-    config.pac_url = pac.as_uri()
+    config.pac_file = str(pac)
 
     body = "function FindProxyForURL(url, host) { return \"DIRECT\"; }"
     assert service.save_pac_content(BUILTIN_ID, body).ok
@@ -430,7 +430,7 @@ def test_doc_va_ghi_duoc_noi_dung_pac(service, tmp_path, monkeypatch):
 def test_tu_choi_pac_khong_co_ham_bat_buoc(service, tmp_path):
     """PAC thiếu FindProxyForURL sẽ bị mọi ứng dụng lặng lẽ bỏ qua."""
     config = service.get(BUILTIN_ID)
-    config.pac_url = (tmp_path / "x.pac").as_uri()
+    config.pac_file = str(tmp_path / "x.pac")
 
     result = service.save_pac_content(BUILTIN_ID, "var a = 1;")
     assert not result.ok
@@ -439,7 +439,7 @@ def test_tu_choi_pac_khong_co_ham_bat_buoc(service, tmp_path):
 
 def test_tu_choi_pac_rong(service, tmp_path):
     config = service.get(BUILTIN_ID)
-    config.pac_url = (tmp_path / "x.pac").as_uri()
+    config.pac_file = str(tmp_path / "x.pac")
     assert not service.save_pac_content(BUILTIN_ID, "   ").ok
 
 
@@ -450,7 +450,7 @@ def test_tu_choi_isinnet_voi_ten_mien(service, tmp_path):
     """Đo trên máy thật: isInNet(host, "*.viettel.com.vn", "255.255.255.0") làm
     google.com đi qua proxy còn vas.viettel.com.vn đi thẳng — ngược hoàn toàn, và
     không có thông báo lỗi ở bất kỳ đâu."""
-    service.get(BUILTIN_ID).pac_url = (tmp_path / "x.pac").as_uri()
+    service.get(BUILTIN_ID).pac_file = str(tmp_path / "x.pac")
     body = (
         'function FindProxyForURL(url, host) {\n'
         '    if (isInNet(host, "*.viettel.com.vn", "255.255.255.0")) {\n'
@@ -466,7 +466,7 @@ def test_tu_choi_isinnet_voi_ten_mien(service, tmp_path):
 
 
 def test_chap_nhan_isinnet_voi_dai_ip(service, tmp_path):
-    service.get(BUILTIN_ID).pac_url = (tmp_path / "x.pac").as_uri()
+    service.get(BUILTIN_ID).pac_file = str(tmp_path / "x.pac")
     body = (
         'function FindProxyForURL(url, host) {\n'
         '    if (isInNet(dnsResolve(host), "10.0.0.0", "255.0.0.0")) {\n'
@@ -480,9 +480,21 @@ def test_chap_nhan_isinnet_voi_dai_ip(service, tmp_path):
 
 def test_bo_qua_isinnet_trong_comment(service, tmp_path):
     """Chú thích hướng dẫn có nêu ví dụ sai — không được coi là lỗi."""
-    service.get(BUILTIN_ID).pac_url = (tmp_path / "x.pac").as_uri()
+    service.get(BUILTIN_ID).pac_file = str(tmp_path / "x.pac")
     body = (
         '// sai: isInNet(host, "*.example.com", "255.255.255.0")\n'
         'function FindProxyForURL(url, host) { return "DIRECT"; }\n'
     )
     assert service.save_pac_content(BUILTIN_ID, body).ok
+
+
+def test_khong_bao_gio_ghi_vao_file_pac_that_khi_test(service, tmp_path):
+    """Chốt lại một lỗi đã thực sự xảy ra: `pac_path` ưu tiên `pac_file`, nên
+    test chỉ đổi `pac_url` sang tmp vẫn ghi thẳng vào file PAC của dự án và xoá
+    mất nội dung người dùng đang dùng."""
+    from netmgr.infra.proxy_store import project_pac_path
+
+    config = service.get(BUILTIN_ID)
+    config.pac_url = (tmp_path / "khong-dung.pac").as_uri()
+    # pac_file vẫn trỏ vào dự án -> pac_path phải theo pac_file, không theo url
+    assert config.pac_path == str(project_pac_path())

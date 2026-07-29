@@ -88,7 +88,11 @@ class RouteEditor(Adw.Dialog):
             )
             main.add(self._device_row)
 
-        self._dest = Adw.EntryRow(title="Địa chỉ đích")
+        # Nhận cả "169.255.187.72/32": gõ CIDR là cách tự nhiên nhất, bắt người
+        # dùng tách tay ra hai ô là bước lùi.
+        self._dest = Adw.EntryRow(title="Địa chỉ đích (nhận cả dạng /32)")
+        #: Chặn vòng lặp khi `_absorb_cidr` tự sửa nội dung ô.
+        self._syncing = False
         # Netmask, không phải prefix: Cài đặt của Ubuntu hiển thị route theo dạng
         # này và người dùng mạng doanh nghiệp quen nghĩ theo netmask. Vẫn nhận cả
         # dạng prefix ("8") cho ai muốn gõ nhanh.
@@ -177,7 +181,28 @@ class RouteEditor(Adw.Dialog):
             enabled=self._original.enabled if self._original else True,
         )
 
+    def _absorb_cidr(self) -> None:
+        """Gõ "10.0.0.0/8" vào ô đích thì tự chuyển /8 sang ô Netmask."""
+        if self._syncing:
+            return
+        text = self._dest.get_text().strip()
+        if "/" not in text:
+            return
+        head, _, tail = text.partition("/")
+        prefix = netmask_to_prefix(tail.strip())
+        if prefix is None:
+            return          # "10.0.0.0/abc" — để phần validate báo lỗi
+
+        self._syncing = True
+        try:
+            self._dest.set_text(head.strip())
+            self._netmask.set_text(prefix_to_netmask(prefix))
+        finally:
+            self._syncing = False
+
     def _validate(self) -> None:
+        self._absorb_cidr()
+
         # Hai luật riêng của form, không đặt ở domain: `parse_route_line` phải
         # đọc được dạng một dòng đang nằm trong file cấu hình, kể cả route
         # on-link không gateway.

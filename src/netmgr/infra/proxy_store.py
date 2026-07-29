@@ -67,7 +67,11 @@ def builtin_config() -> ProxyConfig:
         id=BUILTIN_ID,
         name=BUILTIN_NAME,
         mode=ProxyMode.AUTO,
+        # `pac_url` được app cập nhật thành http://127.0.0.1 khi PAC server chạy
+        # (xem `infra/pac_server.py`). `file://` chỉ là phương án dự phòng, và nó
+        # KHÔNG dùng được với Chrome.
         pac_url=project_pac_path().as_uri(),
+        pac_file=str(project_pac_path()),
         builtin=True,
     )
 
@@ -88,6 +92,8 @@ def config_to_dict(config: ProxyConfig) -> dict:
         data["username"] = config.username
     if config.pac_url:
         data["pac_url"] = config.pac_url
+    if config.pac_file:
+        data["pac_file"] = config.pac_file
     for scheme in _SCHEMES:
         endpoint: ProxyEndpoint = getattr(config, scheme)
         if endpoint.is_set:
@@ -110,6 +116,7 @@ def config_from_dict(data: dict) -> ProxyConfig:
         auth_enabled=bool(data.get("auth_enabled", False)),
         username=str(data.get("username", "")),
         pac_url=str(data.get("pac_url", "")),
+        pac_file=str(data.get("pac_file", "")),
         layers=layers or {ProxyLayerId.DESKTOP, ProxyLayerId.ENVIRONMENT},
         builtin=bool(data.get("builtin", False)),
     )

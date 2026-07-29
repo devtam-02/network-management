@@ -87,6 +87,21 @@ class ProxyService:
         if not pac.exists():
             log.warning("Thiếu file PAC mặc định: %s", pac)
 
+    def set_pac_url(self, config_id: str, url: str) -> None:
+        """Trỏ `pac_url` sang URL do PAC server cấp, giữ nguyên `pac_file`.
+
+        Gọi lúc khởi động: cổng có thể khác lần trước (cổng cũ bị chiếm), nên URL
+        đã lưu không đáng tin.
+        """
+        config = self.get(config_id)
+        if config is None or config.pac_url == url:
+            return
+        config.pac_url = url
+        self._store.save(self._configs, self._active_id)
+        # Đang bật chính nó thì áp lại để hệ thống dùng URL mới ngay.
+        if self._active_id == config_id:
+            self.activate(config_id)
+
     def pac_content(self, config_id: str) -> str | None:
         """Nội dung file PAC, `None` nếu cấu hình không dùng file PAC."""
         config = self.get(config_id)

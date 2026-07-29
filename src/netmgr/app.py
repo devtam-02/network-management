@@ -30,6 +30,7 @@ except (ImportError, ValueError):  # pragma: no cover — bản PyGObject cũ
 
 from . import APP_ID  # noqa: E402
 from .infra.nm_facade import NMFacade, NMUnavailableError, OpResult  # noqa: E402
+from .infra.pac_server import PacServer  # noqa: E402
 from .infra.proxy import EnvdLayer, GSettingsLayer  # noqa: E402
 from .infra.profile_store import ProfileStore  # noqa: E402
 from .infra.proxy_store import ProxyStore  # noqa: E402
@@ -61,6 +62,7 @@ class NetmgrApp(Adw.Application):
         self._window = None
         self._show_window_on_start = show_window
         self._first_activate = True
+        self._pac_server: PacServer | None = None
         #: Interface đang kết nối ở lần refresh trước; None = chưa biết.
         self._connected_ifaces: set[str] | None = None
         self._apply_progress = None
@@ -101,6 +103,10 @@ class NetmgrApp(Adw.Application):
         )
         self._tray.start()
 
+        # PAC server: Chrome từ chối pac_url dạng file://, nên phục vụ file PAC
+        # qua http://127.0.0.1. Chạy trước khi refresh để menu/UI thấy URL đúng.
+        self._start_pac_server()
+
         self._facade.subscribe(self.refresh)
         self.refresh()
 
@@ -135,6 +141,8 @@ class NetmgrApp(Adw.Application):
         # trước khi thoát để không để lại dấu vết nào.
         if self._profiles is not None:
             self._profiles.restore_all()
+        if self._pac_server is not None:
+            self._pac_server.stop()
         if self._tray is not None:
             self._tray.close()
         if self._facade is not None:
@@ -321,6 +329,26 @@ class NetmgrApp(Adw.Application):
         if fresh:
             log.info("Thiết bị vừa kết nối lại: %s", ", ".join(fresh))
             self._profiles.reassert_routes(fresh)
+
+    def _start_pac_server(self) -> None:
+        from .infra.proxy_store import BUILTIN_ID
+
+        config = self._proxy.get(BUILTIN_ID)
+        if config is None or not config.pac_path:
+            return
+
+        self._pac_server = PacServer(config.pac_path)
+        url = self._pac_server.start()
+        if url is None:
+            # Không mở được cổng: vẫn dùng được file://, chỉ là trình duyệt sẽ
+            # bỏ qua. Nói rõ chứ không im lặng.
+            log.warning(
+                "Không chạy được PAC server; giữ %s. Chrome sẽ bỏ qua PAC này.",
+                config.pac_url,
+            )
+            self._pac_server = None
+            return
+        self._proxy.set_pac_url(BUILTIN_ID, url)
 
     def read_runtime_ipv4(self, interface: str, callback) -> None:
         """Cấu hình IPv4 đang chạy trên thiết bị — dùng cho trang Định tuyến."""

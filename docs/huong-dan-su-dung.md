@@ -254,6 +254,17 @@ vô nghĩa mà **không báo lỗi ở bất kỳ đâu**. Đo trên máy thật
 qua proxy còn `vas.viettel.com.vn` lại đi thẳng, đúng ngược lại ý muốn. App phát
 hiện và từ chối lưu kiểu viết này, cũng như khi thiếu `FindProxyForURL`.
 
+**App tự phục vụ file PAC qua HTTP.** `pac_url` của Cấu hình mặc định trỏ vào
+`http://127.0.0.1:21777/proxy.pac`, do chính app phục vụ, chứ không phải `file://`.
+
+Lý do: **Chrome/Chromium từ chối PAC dạng `file://`**. Nếu chỉ dùng `file://` thì
+PAC có tác dụng với các ứng dụng GNOME nhưng im lặng không có tác dụng với trình
+duyệt — kiểu lỗi tệ nhất vì không có thông báo nào. Server chỉ nghe trên
+`127.0.0.1`, đọc lại file trên mỗi request (sửa PAC là có hiệu lực ngay), và tắt
+cùng app. Cổng bị chiếm thì tự nhảy sang cổng kế tiếp và cập nhật lại `pac_url`.
+
+Thứ bạn sửa vẫn là `data/pac/default.pac` — app chỉ đổi cách *giao* file đó.
+
 **Kiểm tra PAC có ăn không:**
 
 ```bash
@@ -275,6 +286,8 @@ máy trở về đúng cấu hình gốc.
 
 Form thêm/sửa route dùng **Netmask** (mặc định `255.0.0.0`) giống bảng Routes
 trong Cài đặt của Ubuntu — vẫn gõ được dạng prefix như `8` nếu bạn quen thế.
+Ô **Địa chỉ đích** nhận luôn dạng CIDR: gõ `169.255.187.72/32` thì `/32` tự
+chuyển sang ô Netmask.
 **Gateway là bắt buộc**; nếu đích nằm trực tiếp trên liên kết thì bật *On-link*
 để khai rõ.
 
