@@ -365,16 +365,37 @@ class MainWindow(Adw.ApplicationWindow):
         )
         row.add_suffix(use)
 
-        edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER,
-                          css_classes=["flat"], tooltip_text="Sửa")
-        edit.connect("clicked", lambda _b, cid=row_vm.config_id: self._edit_proxy(cid))
-        row.add_suffix(edit)
+        if row_vm.pac_path:
+            pac = Gtk.Button(icon_name="text-x-generic-symbolic",
+                             valign=Gtk.Align.CENTER, css_classes=["flat"],
+                             tooltip_text="Sửa file PAC")
+            pac.connect("clicked", lambda _b, cid=row_vm.config_id: self._edit_pac(cid))
+            row.add_suffix(pac)
 
+        # Cấu hình có sẵn của app: chỉ sửa được file PAC, phần còn lại do app
+        # định nghĩa nên không mở form sửa.
+        if not row_vm.delete_blocked_reason:
+            edit = Gtk.Button(icon_name="document-edit-symbolic", valign=Gtk.Align.CENTER,
+                              css_classes=["flat"], tooltip_text="Sửa")
+            edit.connect("clicked", lambda _b, cid=row_vm.config_id: self._edit_proxy(cid))
+            row.add_suffix(edit)
+
+        # Nút bị khoá phải nói được vì sao khi người dùng bấm vào.
+        blocked = row_vm.delete_blocked_reason
         remove = Gtk.Button(icon_name="user-trash-symbolic", valign=Gtk.Align.CENTER,
-                            css_classes=["flat"], tooltip_text="Xoá")
-        remove.connect("clicked", lambda _b, r=row_vm: self._confirm_delete_proxy(r))
+                            css_classes=["flat"],
+                            tooltip_text=blocked or "Xoá")
+        if blocked:
+            remove.connect("clicked", lambda _b, m=blocked: self.toast(m))
+        else:
+            remove.connect("clicked", lambda _b, r=row_vm: self._confirm_delete_proxy(r))
         row.add_suffix(remove)
         return row
+
+    def _edit_pac(self, config_id: str) -> None:
+        from .pac_editor import PacEditor
+
+        PacEditor(self, self._controller, config_id).present(self)
 
     def _proxy_import_group(self) -> Adw.PreferencesGroup:
         group = Adw.PreferencesGroup(title="Công cụ")

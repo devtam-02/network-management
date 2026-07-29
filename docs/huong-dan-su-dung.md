@@ -224,12 +224,39 @@ không đụng proxy — nó chạy nền nên không được phép làm rớt 
 bên ngoài. Sửa Bộ cấu hình đang dùng rồi bấm **Lưu** thì app **tự áp lại ngay**,
 không cần bấm nút này.
 
+### 5.1.0 Cấu hình proxy mặc định
+
+App luôn tạo sẵn một cấu hình tên **Cấu hình mặc định**, chế độ *tự động (PAC)*,
+trỏ vào file PAC nằm trong thư mục dự án:
+
+```
+data/pac/default.pac
+```
+
+Nhờ nó, app không bao giờ ở trạng thái "muốn dùng proxy mà chưa có gì để chọn".
+Nhưng **proxy vẫn tắt** cho tới khi bạn tự bấm *Dùng* — có sẵn không có nghĩa là
+đang bật.
+
+Cấu hình này **không xoá được** và không sửa được tên/chế độ. Thứ duy nhất sửa
+được là **nội dung file PAC**: bấm biểu tượng 📄 ở hàng của nó. File PAC là một
+hàm JavaScript `FindProxyForURL(url, host)` trả về `"DIRECT"` hoặc
+`"PROXY host:port"`; bản mặc định cho mọi thứ đi thẳng, kèm chú thích tiếng Việt
+để bạn sửa theo nhu cầu. App từ chối lưu nếu thiếu hàm đó, vì khi ấy mọi ứng
+dụng sẽ lặng lẽ bỏ qua file.
+
 ### 5.1.1 Route riêng của Bộ cấu hình
 
 Mục **Route riêng** trong hộp thoại sửa cho phép mỗi Bộ cấu hình có bảng route
 của riêng nó. Chọn route đi qua thiết bị nào, và các route này **chỉ tồn tại
 trong lúc Bộ cấu hình đang bật** — tắt app hoặc chọn *Không dùng Bộ cấu hình* là
 máy trở về đúng cấu hình gốc.
+
+Mỗi route có **công tắc bật/tắt** riêng. Tắt là *tạm không áp*, không phải xoá —
+route vẫn nằm trong Bộ cấu hình và bật lại được mà không phải gõ lại.
+
+Route được ghi **xuống cấu hình đã lưu** của NetworkManager, nên xem được trong
+Cài đặt của Ubuntu và không mất khi thiết bị dựng lại. App nhớ route gốc của máy
+và trả lại khi bạn bỏ Bộ cấu hình hoặc thoát app.
 
 **Automatic bật/tắt theo route, không phải một lựa chọn riêng.** Giống nút
 *Automatic* ở phần Routes trong Cài đặt của Ubuntu:
@@ -254,15 +281,14 @@ bảng route của các mạng nó bật, không phụ thuộc Bộ cấu hình 
   `nmcli -g ipv4.ignore-auto-routes connection show "<tên>"`. Đây là cấu hình đã
   lưu trên đĩa.
 
-Chế độ Automatic là **thứ duy nhất** app ghi xuống đĩa. Lý do: chỉ đổi runtime
-thì Settings không thấy, và cấu hình mất mỗi lần thiết bị dựng lại. App nhớ giá
-trị gốc của máy trong `~/.config/netmgr/profiles.toml` và trả lại khi bạn bỏ Bộ
-cấu hình hoặc thoát app.
+Route tĩnh và chế độ Automatic là những thứ app ghi xuống đĩa. Lý do: chỉ đổi
+runtime thì Settings không thấy, và cấu hình mất mỗi lần thiết bị dựng lại. App
+nhớ giá trị gốc của máy trong `~/.config/netmgr/profiles.toml` và trả lại khi bạn
+bỏ Bộ cấu hình hoặc thoát app.
 
-> Route tĩnh thì vẫn **chỉ sống ở runtime**, không ghi đĩa. Ghi xuống đĩa khiến
-> NetworkManager viết lại `/etc/netplan/90-NM-<uuid>.yaml` — đường đã từng làm
-> mất `connection.interface-name`. App kiểm trường đó sau mỗi lần ghi và báo lỗi
-> nếu nó thay đổi.
+> Ghi xuống đĩa khiến NetworkManager viết lại `/etc/netplan/90-NM-<uuid>.yaml` —
+> đường đã từng làm mất `connection.interface-name`. App kiểm trường đó sau mỗi
+> lần ghi và báo lỗi nếu nó thay đổi.
 
 > ⚠ Tắt Automatic bỏ **tất cả** route do DHCP cấp, kể cả default route. Nếu bạn
 > đặt route riêng cho đúng cái mạng đang là đường ra Internet, app hiện cảnh báo

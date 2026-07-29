@@ -25,6 +25,8 @@ class FakeNetwork:
         self.stored_modes: dict[str, bool] = {}
         #: interface -> thông báo lỗi khi kích hoạt thiết bị đó.
         self.fail_activate: dict[str, str] = {}
+        #: uuid -> route tĩnh đã ghi xuống cấu hình đã lưu.
+        self.stored_routes: dict[str, list[str]] = {}
 
     def snapshot(self):
         return self._snapshot
@@ -112,9 +114,11 @@ class FakeNetwork:
         self.runtime_routes[interface] = list(routes)
         callback(OpResult.success())
 
-    def set_stored_automatic_routes(self, uuid: str, automatic: bool, callback=None) -> None:
+    def set_stored_ipv4_routes(self, uuid, routes, automatic, callback=None) -> None:
         self.calls.append(("store_mode", uuid))
         self.stored_modes[uuid] = automatic
+        if routes is not None:
+            self.stored_routes[uuid] = [str(r) for r in routes if r.enabled]
         if callback is not None:
             callback(OpResult.success())
 

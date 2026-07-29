@@ -196,7 +196,9 @@ def test_binding_routes_stored_as_readable_lines(store):
     assert '"10.0.0.0/8 via 10.1.1.1"' in store.path.read_text()
 
 
-def test_disabled_route_not_persisted():
+def test_route_bi_tat_van_duoc_luu_kem_trang_thai():
+    """Tắt route là "tạm không dùng", không phải "xoá". Xoá khi lưu thì bật lại
+    phải gõ tay lại toàn bộ."""
     from netmgr.domain.models import Ipv4Route
 
     profile = new_profile(
@@ -206,8 +208,13 @@ def test_disabled_route_not_persisted():
             Ipv4Route("172.16.0.0", 12, enabled=False),
         ])],
     )
-    restored = profile_from_dict(profile_to_dict(profile))
-    assert [r.cidr for r in restored.bindings[0].routes] == ["10.0.0.0/8"]
+    data = profile_to_dict(profile)
+    assert data["binding"][0]["routes"][1].startswith("off ")
+
+    restored = profile_from_dict(data)
+    routes = restored.bindings[0].routes
+    assert [r.cidr for r in routes] == ["10.0.0.0/8", "172.16.0.0/12"]
+    assert [r.enabled for r in routes] == [True, False]
 
 
 def test_unparseable_route_line_skipped():

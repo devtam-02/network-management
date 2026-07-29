@@ -139,11 +139,25 @@ class ProfileEditor(Adw.Dialog):
         add.connect("clicked", lambda _b: self._edit_route(None))
         group.set_header_suffix(add)
 
+        self._route_switches = []
         for index, (route, iface) in enumerate(self._routes):
             device = self._snapshot.device_by_interface(iface)
             via = vm.device_label(device) if device else iface
-            row = Adw.ActionRow(title=str(route), subtitle=f"qua {via}  ·  {iface}")
+            row = Adw.ActionRow(
+                title=str(route),
+                subtitle=f"qua {via}  ·  {iface}"
+                + ("" if route.enabled else "  ·  đang tắt"),
+                css_classes=[] if route.enabled else ["dim-label"],
+            )
             row.set_title_selectable(True)
+
+            # Tắt = tạm không áp, KHÔNG phải xoá. Vẫn nằm trong Bộ cấu hình và
+            # bật lại được, nên không phải gõ lại route.
+            switch = Gtk.Switch(active=route.enabled, valign=Gtk.Align.CENTER,
+                                tooltip_text="Bật/tắt route này")
+            switch.connect("state-set", self._on_route_toggled, index)
+            row.add_prefix(switch)
+            self._route_switches.append(switch)
 
             edit = Gtk.Button(icon_name="document-edit-symbolic", css_classes=["flat"],
                               valign=Gtk.Align.CENTER, tooltip_text="Sửa")
@@ -220,6 +234,15 @@ class ProfileEditor(Adw.Dialog):
             devices=choices,
             current_device=current_iface,
         ).present(self._window)
+
+    def _on_route_toggled(self, _switch, active: bool, index: int) -> bool:
+        from dataclasses import replace
+
+        route, iface = self._routes[index]
+        self._routes[index] = (replace(route, enabled=active), iface)
+        self._remember()
+        self._rebuild()
+        return False        # để Gtk.Switch tự cập nhật trạng thái hiển thị
 
     def _delete_route(self, index: int) -> None:
         del self._routes[index]

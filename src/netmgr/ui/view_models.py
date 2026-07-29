@@ -330,6 +330,10 @@ class ProxyRow:
     title: str
     subtitle: str
     is_active: bool
+    #: "" = xoá được. Khác "" thì nút xoá bị khoá và đây là lý do hiện ra khi bấm.
+    delete_blocked_reason: str = ""
+    #: Đường dẫn file PAC sửa được, "" nếu cấu hình không dùng PAC.
+    pac_path: str = ""
 
 
 def proxy_rows(configs, active_id: str | None) -> list[ProxyRow]:
@@ -339,8 +343,15 @@ def proxy_rows(configs, active_id: str | None) -> list[ProxyRow]:
             title=c.name,
             subtitle=c.summary()
             + (" · cần xác thực" if c.auth_enabled else "")
-            + f" · {len(c.ignore_hosts)} mục bỏ qua",
+            + f" · {len(c.ignore_hosts)} mục bỏ qua"
+            + (" · có sẵn của app" if c.builtin else ""),
             is_active=c.id == active_id,
+            delete_blocked_reason=(
+                f"'{c.name}' là cấu hình có sẵn của app nên không xoá được. "
+                "Chỉ sửa được nội dung file PAC của nó."
+                if c.builtin else ""
+            ),
+            pac_path=c.pac_path,
         )
         for c in configs
     ]

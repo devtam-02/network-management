@@ -44,6 +44,34 @@ def default_config_dir() -> Path:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+#: Cấu hình proxy do app tạo sẵn. Id cố định để nhận ra qua các lần khởi động.
+BUILTIN_ID = "builtin-default"
+BUILTIN_NAME = "Cấu hình mặc định"
+
+
+def project_pac_path() -> Path:
+    """File PAC của cấu hình mặc định, nằm trong thư mục dự án.
+
+    Đặt trong dự án (không phải ~/.config) để nó đi kèm mã nguồn: sửa file là
+    thấy hiệu lực ngay, và có thể theo dõi thay đổi bằng git.
+    """
+    return Path(__file__).resolve().parents[3] / "data" / "pac" / "default.pac"
+
+
+def builtin_config() -> ProxyConfig:
+    """Cấu hình proxy mặc định: chế độ tự động (PAC), trỏ vào file trong dự án.
+
+    LUÔN có sẵn nhưng KHÔNG tự bật — proxy vẫn tắt tới khi người dùng chọn nó.
+    """
+    return ProxyConfig(
+        id=BUILTIN_ID,
+        name=BUILTIN_NAME,
+        mode=ProxyMode.AUTO,
+        pac_url=project_pac_path().as_uri(),
+        builtin=True,
+    )
+
+
 def config_to_dict(config: ProxyConfig) -> dict:
     data: dict = {
         "id": config.id,
@@ -54,6 +82,8 @@ def config_to_dict(config: ProxyConfig) -> dict:
         "auth_enabled": config.auth_enabled,
         "layers": sorted(layer.value for layer in config.layers),
     }
+    if config.builtin:
+        data["builtin"] = True
     if config.username:
         data["username"] = config.username
     if config.pac_url:
@@ -81,6 +111,7 @@ def config_from_dict(data: dict) -> ProxyConfig:
         username=str(data.get("username", "")),
         pac_url=str(data.get("pac_url", "")),
         layers=layers or {ProxyLayerId.DESKTOP, ProxyLayerId.ENVIRONMENT},
+        builtin=bool(data.get("builtin", False)),
     )
     for scheme in _SCHEMES:
         raw = data.get(scheme)

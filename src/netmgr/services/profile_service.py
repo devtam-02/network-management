@@ -18,6 +18,7 @@ from ..domain.models import (
     Profile,
     ProfileApplyReport,
 )
+from ..domain.validators import format_route_line, parse_route_line
 from .profile_applier import ProfileApplier
 
 log = logging.getLogger(__name__)
@@ -40,6 +41,8 @@ class ProfileService:
         self._active_id = self._store.load_active_id()
         #: uuid connection -> `ipv4.ignore-auto-routes` gốc của máy, để trả lại.
         self._original_route_modes = self._store.load_original_route_modes()
+        #: uuid connection -> route tĩnh gốc của máy, dạng một dòng đọc được.
+        self._original_routes = self._store.load_original_routes()
         if self._active_id and self.get(self._active_id) is None:
             self._active_id = None
         self._refresh_broken_flags()
@@ -250,7 +253,7 @@ class ProfileService:
                 profile.name, device.interface,
                 "bật" if binding.automatic_routes else "tắt",
             )
-            self._persist_route_mode(device, snapshot, binding.automatic_routes)
+            self._persist_route_mode(device, snapshot, binding)
             self._network.apply_runtime_routes(
                 device.interface,
                 list(binding.routes),
@@ -268,7 +271,7 @@ class ProfileService:
             return
         snapshot, targets = self._routing_targets(profile)
         for device, binding in targets:
-            self._persist_route_mode(device, snapshot, binding.automatic_routes)
+            self._persist_route_mode(device, snapshot, binding)
 
     def _routing_targets(self, profile: Profile, interfaces: list[str] | None = None):
         """(snapshot, [(device, binding)]) — thiết bị đang kết nối mà Bộ cấu hình
@@ -289,11 +292,11 @@ class ProfileService:
                 out.append((device, binding))
         return snapshot, out
 
-    def _persist_route_mode(self, device, snapshot, automatic: bool) -> None:
-        """Ghi chế độ Automatic xuống cấu hình đã lưu, nhớ giá trị gốc trước.
+    def _persist_route_mode(self, device, snapshot, binding) -> None:
+        """Ghi route tĩnh + chế độ Automatic xuống cấu hình đã lưu.
 
-        Chỉ ghi thuộc tính này, không ghi route — route vẫn thuộc về Bộ cấu hình
-        và chỉ sống ở runtime.
+        Ghi cả route, không chỉ chế độ: chỉ đổi runtime thì Cài đặt của Ubuntu
+        không thấy route nào, và route mất mỗi lần thiết bị dựng lại cấu hình.
         """
         uuid = device.active_connection_uuid
         if not uuid:
@@ -306,19 +309,31 @@ class ProfileService:
         # app vừa đặt, và người dùng mất đường về cấu hình ban đầu.
         if uuid not in self._original_route_modes:
             self._original_route_modes[uuid] = conn.ipv4.ignore_auto_routes
+            self._original_routes[uuid] = [
+                format_route_line(r) for r in conn.ipv4.static_routes
+            ]
             self._persist()
 
-        self._network.set_stored_automatic_routes(
-            uuid, automatic, self._log_persist
+        # Bộ cấu hình không có route riêng thì ĐỪNG xoá route của máy: nó chỉ nói
+        # "để DHCP lo", không nói "bỏ hết route tĩnh đã lưu".
+        routes = list(binding.routes) if binding.routes else None
+        self._network.set_stored_ipv4_routes(
+            uuid, routes, binding.automatic_routes, self._log_persist
         )
 
     def _restore_route_modes(self) -> None:
-        """Trả `ipv4.ignore-auto-routes` của mọi connection về giá trị gốc."""
+        """Trả route tĩnh và chế độ Automatic của mọi connection về giá trị gốc."""
         for uuid, ignore_auto in list(self._original_route_modes.items()):
-            self._network.set_stored_automatic_routes(
-                uuid, not ignore_auto, self._log_persist
+            lines = self._original_routes.get(uuid)
+            routes = (
+                [r for r in (parse_route_line(x) for x in lines) if r is not None]
+                if lines is not None else None
+            )
+            self._network.set_stored_ipv4_routes(
+                uuid, routes, not ignore_auto, self._log_persist
             )
         self._original_route_modes.clear()
+        self._original_routes.clear()
         self._persist()
 
     @staticmethod
@@ -416,5 +431,6 @@ class ProfileService:
 
     def _persist(self) -> None:
         self._store.save(
-            self._profiles, self._active_id, self._original_route_modes
+            self._profiles, self._active_id,
+            self._original_route_modes, self._original_routes,
         )

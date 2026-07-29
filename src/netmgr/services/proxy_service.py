@@ -13,9 +13,11 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
+from pathlib import Path
 
 from ..domain.models import OpResult, ProxyConfig, ProxyLayerId, ProxyMode
 from ..domain.validators import validate_proxy
+from ..infra.proxy_store import BUILTIN_ID, builtin_config, project_pac_path
 
 log = logging.getLogger(__name__)
 
@@ -67,6 +69,63 @@ class ProxyService:
         if self._active_id and not self.get(self._active_id):
             # Config bị xoá tay khỏi file mà active_id còn trỏ tới nó.
             self._active_id = None
+        self._ensure_builtin()
+
+    def _ensure_builtin(self) -> None:
+        """Bảo đảm luôn có "Cấu hình mặc định", và file PAC của nó tồn tại.
+
+        Nhờ vậy app không bao giờ ở trạng thái "muốn dùng proxy mà chưa có gì để
+        chọn". Cấu hình này KHÔNG tự bật: proxy vẫn tắt tới khi người dùng chọn.
+        """
+        if self.get(BUILTIN_ID) is None:
+            # Đặt lên đầu danh sách: đây là thứ người dùng thấy trước tiên.
+            self._configs.insert(0, builtin_config())
+            self._store.save(self._configs, self._active_id)
+
+        pac = project_pac_path()
+        if not pac.exists():
+            log.warning("Thiếu file PAC mặc định: %s", pac)
+
+    def pac_content(self, config_id: str) -> str | None:
+        """Nội dung file PAC, `None` nếu cấu hình không dùng file PAC."""
+        config = self.get(config_id)
+        if config is None or not config.pac_path:
+            return None
+        try:
+            return Path(config.pac_path).read_text(encoding="utf-8")
+        except OSError as exc:
+            log.error("Không đọc được %s: %s", config.pac_path, exc)
+            return None
+
+    def save_pac_content(self, config_id: str, text: str) -> OpResult:
+        """Ghi lại nội dung file PAC.
+
+        Với "Cấu hình mặc định" thì đây là thứ DUY NHẤT sửa được — phần còn lại
+        do app định nghĩa nên không cho đổi.
+        """
+        config = self.get(config_id)
+        if config is None:
+            return OpResult(False, "Không tìm thấy cấu hình proxy")
+        if not config.pac_path:
+            return OpResult(False, "Cấu hình này không dùng file PAC")
+        if not text.strip():
+            return OpResult(False, "File PAC không được để trống")
+        if "FindProxyForURL" not in text:
+            # PAC không có hàm này thì mọi ứng dụng sẽ lặng lẽ bỏ qua nó.
+            return OpResult(False, "File PAC phải có hàm FindProxyForURL(url, host)")
+
+        path = Path(config.pac_path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        except OSError as exc:
+            return OpResult(False, f"Không ghi được {path}: {exc}")
+
+        # Đang bật chính nó thì áp lại để hiệu lực ngay: các ứng dụng đọc PAC
+        # theo URL nên chỉ cần bảo hệ thống nạp lại.
+        if self._active_id == config_id:
+            self.activate(config_id)
+        return OpResult.success(f"Đã lưu {path.name}")
 
     @property
     def configs(self) -> list[ProxyConfig]:
@@ -124,6 +183,12 @@ class ProxyService:
         config = self.get(config_id)
         if config is None:
             return OpResult(False, "Không tìm thấy cấu hình proxy")
+        if config.builtin:
+            return OpResult(
+                False,
+                f"'{config.name}' là cấu hình có sẵn của app nên không xoá được. "
+                "Chỉ sửa được nội dung file PAC của nó.",
+            )
 
         if self._active_id == config_id:
             # Xoá cấu hình đang bật mà không tắt trước sẽ để proxy chạy mồ côi:

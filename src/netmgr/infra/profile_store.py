@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -28,6 +29,10 @@ Sửa tay được, nhưng app đang chạy sẽ ghi đè khi bạn lưu từ gi
 """
 
 
+#: Tiền tố đánh dấu route đang tắt trong file cấu hình.
+OFF_PREFIX = "off "
+
+
 def binding_to_dict(binding: Binding) -> dict:
     data: dict = {
         "device_match": binding.device_match,
@@ -40,7 +45,12 @@ def binding_to_dict(binding: Binding) -> dict:
     if binding.routes:
         # Lưu dạng một dòng cho dễ đọc và sửa tay:
         #   "10.0.0.0/8 via 10.207.154.254 metric 100"
-        data["routes"] = [format_route_line(r) for r in binding.routes if r.enabled]
+        #   "off 10.0.0.0/8 via 10.207.154.254"     (đang tắt)
+        # Route bị tắt vẫn phải lưu: tắt là "tạm không dùng", không phải "xoá".
+        data["routes"] = [
+            format_route_line(r) if r.enabled else f"{OFF_PREFIX}{format_route_line(r)}"
+            for r in binding.routes
+        ]
     return data
 
 
@@ -52,10 +62,14 @@ def binding_from_dict(data: dict) -> Binding:
         # nhất: không đụng vào thiết bị.
         action = BindingAction.LEAVE_ALONE
     routes = []
-    for line in data.get("routes", []):
-        route, _error = parse_route_line(str(line))
+    for raw in data.get("routes", []):
+        line = str(raw)
+        enabled = not line.startswith(OFF_PREFIX)
+        if not enabled:
+            line = line[len(OFF_PREFIX):]
+        route, _error = parse_route_line(line)
         if route is not None:
-            routes.append(route)
+            routes.append(replace(route, enabled=enabled))
 
     return Binding(
         device_match=str(data.get("device_match", "")),
@@ -133,6 +147,20 @@ class ProfileStore:
     def load_active_id(self) -> str | None:
         return self._raw().get("active_id") or None
 
+    def load_original_routes(self) -> dict[str, list[str]]:
+        """Route tĩnh GỐC của máy, theo uuid connection, dạng một dòng đọc được.
+
+        Cùng lý do như `load_original_route_modes`: app ghi route xuống cấu hình
+        của NetworkManager, nên đường về phải nằm trên đĩa.
+        """
+        raw = self._raw().get("original_routes", {})
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            k: [str(x) for x in v]
+            for k, v in raw.items() if isinstance(v, list)
+        }
+
     def load_original_route_modes(self) -> dict[str, bool]:
         """Giá trị `ipv4.ignore-auto-routes` GỐC của máy, theo uuid connection.
 
@@ -150,11 +178,13 @@ class ProfileStore:
         profiles: list[Profile],
         active_id: str | None = None,
         original_route_modes: dict[str, bool] | None = None,
+        original_routes: dict[str, list[str]] | None = None,
     ) -> bool:
         payload = {
             "schema_version": SCHEMA_VERSION,
             "active_id": active_id or "",
             "original_route_mode": dict(original_route_modes or {}),
+            "original_routes": {k: list(v) for k, v in (original_routes or {}).items()},
             "profile": [profile_to_dict(p) for p in profiles],
         }
         try:

@@ -396,10 +396,23 @@ class ProxyConfig:
     layers: set[ProxyLayerId] = field(
         default_factory=lambda: {ProxyLayerId.DESKTOP, ProxyLayerId.ENVIRONMENT}
     )
+    #: Cấu hình do app tạo sẵn: không xoá được, và chỉ sửa được nội dung file PAC.
+    #: Có nó thì app luôn có một cấu hình proxy dùng ngay được, không cần người
+    #: dùng tự dựng từ đầu.
+    builtin: bool = False
 
     @property
     def is_enabled(self) -> bool:
         return self.mode is not ProxyMode.NONE
+
+    @property
+    def pac_path(self) -> str:
+        """Đường dẫn file PAC trên đĩa, "" nếu pac_url không phải file://."""
+        if not self.pac_url.startswith("file://"):
+            return ""
+        from urllib.parse import unquote, urlparse
+
+        return unquote(urlparse(self.pac_url).path)
 
     #: `use_same_for_all` chỉ áp cho các scheme cùng nói giao thức HTTP.
     #: SOCKS là giao thức KHÁC HẲN: gửi traffic SOCKS5 tới cổng của một HTTP

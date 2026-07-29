@@ -145,6 +145,19 @@ def _route_from_nm(nm_route, source: RouteSource) -> Ipv4Route:
     )
 
 
+def _same_routes(setting, wanted: list[Ipv4Route]) -> bool:
+    """Route đã lưu có khớp danh sách mong muốn chưa (bỏ qua thứ tự)."""
+    def key(dest, prefix, hop, metric):
+        return (dest, prefix, hop or "", -1 if metric is None else metric)
+
+    current = {
+        key(setting.get_route(i).get_dest(), setting.get_route(i).get_prefix(),
+            setting.get_route(i).get_next_hop(), setting.get_route(i).get_metric())
+        for i in range(setting.get_num_routes())
+    }
+    return current == {key(r.dest, r.prefix, r.next_hop, r.metric) for r in wanted}
+
+
 def _to_nm_route(route: Ipv4Route) -> NM.IPRoute:
     """Ngược lại — dùng khi ghi cấu hình (§4.5)."""
     nm_route = NM.IPRoute.new(
@@ -616,15 +629,20 @@ class NMFacade:
 
         self._reapply_with(interface, mutate, callback, f"Áp route cho {interface}")
 
-    def set_stored_automatic_routes(
-        self, uuid: str, automatic: bool, callback: OpCallback | None = None
+    def set_stored_ipv4_routes(
+        self,
+        uuid: str,
+        routes: list[Ipv4Route] | None,
+        automatic: bool,
+        callback: OpCallback | None = None,
     ) -> None:
-        """Ghi chế độ Automatic của route xuống cấu hình ĐÃ LƯU (tức xuống đĩa).
+        """Ghi route tĩnh và chế độ Automatic xuống cấu hình ĐÃ LƯU (xuống đĩa).
 
-        Đây là ngoại lệ duy nhất của nguyên tắc "không ghi đĩa", và có lý do:
-        chỉ đổi runtime thì Cài đặt của Ubuntu không thấy, và cấu hình mất mỗi
-        lần thiết bị dựng lại. Chỉ ghi ĐÚNG MỘT thuộc tính; route tĩnh vẫn chỉ
-        sống ở runtime.
+        Đây là ngoại lệ của nguyên tắc "không ghi đĩa", và có lý do: chỉ đổi
+        runtime thì Cài đặt của Ubuntu không thấy, và cấu hình mất mỗi lần thiết
+        bị dựng lại. App nhớ giá trị gốc và trả lại khi bỏ Bộ cấu hình.
+
+        `routes=None` nghĩa là chỉ đổi chế độ Automatic, giữ nguyên route.
 
         Trên Ubuntu, ghi xuống đĩa khiến NetworkManager viết lại
         /etc/netplan/90-NM-<uuid>.yaml — chính đường đã từng làm mất
@@ -640,11 +658,19 @@ class NMFacade:
         if setting is None:
             self._report(callback, OpResult(False, "Cấu hình không có IPv4"))
             return
-        if setting.get_ignore_auto_routes() == (not automatic):
+
+        wanted = [r for r in (routes or []) if r.enabled]
+        mode_ok = setting.get_ignore_auto_routes() == (not automatic)
+        routes_ok = routes is None or _same_routes(setting, wanted)
+        if mode_ok and routes_ok:
             self._report(callback, OpResult.success())     # đã đúng, đừng ghi đĩa
             return
 
         setting.set_property("ignore-auto-routes", not automatic)
+        if routes is not None:
+            setting.clear_routes()
+            for route in wanted:
+                setting.add_route(_to_nm_route(route))
         before = connection.get_setting_connection().get_interface_name()
         connection.commit_changes_async(
             True, None, self._on_stored_committed,

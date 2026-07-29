@@ -14,6 +14,7 @@ from netmgr.domain.models import (
 from netmgr.infra.proxy.base import LayerStatus, ProxyLayer
 from netmgr.infra.proxy_store import ProxyStore, new_config
 from netmgr.infra.secrets import NullSecretStore
+from netmgr.infra.proxy_store import BUILTIN_ID
 from netmgr.services.proxy_service import ProxyService
 
 
@@ -81,21 +82,29 @@ def service(tmp_path, desktop, env) -> ProxyService:
 # ── CRUD ─────────────────────────────────────────────────────────────────────
 
 
-def test_starts_empty(service):
-    assert service.configs == []
+def user_configs(service):
+    """Cấu hình do NGƯỜI DÙNG tạo — bỏ "Cấu hình mặc định" app luôn tạo sẵn."""
+    return [c for c in service.configs if not c.builtin]
+
+
+def test_starts_with_only_builtin(service):
+    """App luôn có sẵn một cấu hình proxy dùng được, nhưng KHÔNG tự bật."""
+    assert user_configs(service) == []
+    assert [c.id for c in service.configs] == [BUILTIN_ID]
+    assert service.is_enabled is False
     assert service.active is None
     assert service.summary() is None
 
 
 def test_save_adds_config(service):
     assert service.save(manual()).ok
-    assert len(service.configs) == 1
+    assert len(user_configs(service)) == 1
 
 
 def test_save_rejects_invalid_config(service):
     invalid = new_config("", mode=ProxyMode.MANUAL)      # thiếu tên và endpoint
     assert not service.save(invalid).ok
-    assert service.configs == []
+    assert user_configs(service) == []
 
 
 def test_save_updates_existing_by_id(service):
@@ -103,21 +112,21 @@ def test_save_updates_existing_by_id(service):
     service.save(cfg)
     cfg.name = "Đổi tên"
     service.save(cfg)
-    assert len(service.configs) == 1
-    assert service.configs[0].name == "Đổi tên"
+    assert len(user_configs(service)) == 1
+    assert user_configs(service)[0].name == "Đổi tên"
 
 
 def test_config_persists_across_reload(service):
     service.save(manual())
     service.reload()
-    assert len(service.configs) == 1
+    assert len(user_configs(service)) == 1
 
 
 def test_delete_removes_config(service):
     cfg = manual()
     service.save(cfg)
     assert service.delete(cfg.id).ok
-    assert service.configs == []
+    assert user_configs(service) == []
 
 
 def test_delete_unknown_id_fails(service):
@@ -130,7 +139,7 @@ def test_duplicate_creates_new_id(service):
     clone = service.duplicate(cfg.id, "Bản sao")
     assert clone.id != cfg.id
     assert clone.name == "Bản sao"
-    assert len(service.configs) == 2
+    assert len(user_configs(service)) == 2
 
 
 def test_duplicate_does_not_share_mutable_state(service):
@@ -267,8 +276,12 @@ def test_toggle_remembers_last_used(service):
     assert service.active.id == b.id
 
 
-def test_toggle_without_configs_does_nothing(service):
-    assert service.toggle() is None
+def test_toggle_khi_chua_tao_gi_thi_bat_cau_hinh_mac_dinh(service, desktop):
+    """Người dùng chưa tạo cấu hình nào vẫn bật được proxy — đó là lý do có
+    "Cấu hình mặc định"."""
+    report = service.toggle()
+    assert report is not None and report.ok
+    assert service.active.id == BUILTIN_ID
 
 
 # ── xoá cấu hình đang bật ────────────────────────────────────────────────────
@@ -376,3 +389,55 @@ def test_import_without_desktop_layer_returns_none(tmp_path, env):
 def test_layer_statuses_cover_every_layer(service):
     statuses = service.layer_statuses()
     assert {s.layer for s in statuses} == {ProxyLayerId.DESKTOP, ProxyLayerId.ENVIRONMENT}
+
+
+# ── "Cấu hình mặc định" có sẵn của app ───────────────────────────────────────
+
+
+def test_cau_hinh_mac_dinh_la_pac_tro_vao_file_trong_du_an(service):
+    from netmgr.domain.models import ProxyMode
+
+    config = service.get(BUILTIN_ID)
+    assert config.mode is ProxyMode.AUTO
+    assert config.pac_url.startswith("file://")
+    assert config.pac_path.endswith("data/pac/default.pac")
+
+
+def test_khong_xoa_duoc_cau_hinh_mac_dinh(service):
+    result = service.delete(BUILTIN_ID)
+    assert not result.ok
+    assert "không xoá được" in result.message
+    assert service.get(BUILTIN_ID) is not None
+
+
+def test_khong_tao_lai_khi_da_co(service):
+    """Nạp lại nhiều lần không được sinh ra nhiều bản."""
+    service.reload()
+    service.reload()
+    assert len([c for c in service.configs if c.builtin]) == 1
+
+
+def test_doc_va_ghi_duoc_noi_dung_pac(service, tmp_path, monkeypatch):
+    pac = tmp_path / "x.pac"
+    config = service.get(BUILTIN_ID)
+    config.pac_url = pac.as_uri()
+
+    body = "function FindProxyForURL(url, host) { return \"DIRECT\"; }"
+    assert service.save_pac_content(BUILTIN_ID, body).ok
+    assert service.pac_content(BUILTIN_ID) == body
+
+
+def test_tu_choi_pac_khong_co_ham_bat_buoc(service, tmp_path):
+    """PAC thiếu FindProxyForURL sẽ bị mọi ứng dụng lặng lẽ bỏ qua."""
+    config = service.get(BUILTIN_ID)
+    config.pac_url = (tmp_path / "x.pac").as_uri()
+
+    result = service.save_pac_content(BUILTIN_ID, "var a = 1;")
+    assert not result.ok
+    assert "FindProxyForURL" in result.message
+
+
+def test_tu_choi_pac_rong(service, tmp_path):
+    config = service.get(BUILTIN_ID)
+    config.pac_url = (tmp_path / "x.pac").as_uri()
+    assert not service.save_pac_content(BUILTIN_ID, "   ").ok
