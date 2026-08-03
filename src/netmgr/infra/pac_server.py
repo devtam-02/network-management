@@ -114,7 +114,9 @@ class PacServer:
         return self.url
 
     def stop(self) -> None:
+        log.info("[DEBUG] Stopping PAC server")
         if self._server is None:
+            log.info("[DEBUG] PAC server is none")
             return
         self._server.shutdown()
         self._server.server_close()

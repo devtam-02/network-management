@@ -105,6 +105,7 @@ class NetmgrApp(Adw.Application):
 
         # PAC server: Chrome từ chối pac_url dạng file://, nên phục vụ file PAC
         # qua http://127.0.0.1. Chạy trước khi refresh để menu/UI thấy URL đúng.
+        log.info("Bắt đầu khởi động PAC server")
         self._start_pac_server()
 
         self._facade.subscribe(self.refresh)
@@ -332,17 +333,25 @@ class NetmgrApp(Adw.Application):
 
     def _start_pac_server(self) -> None:
         from .infra.proxy_store import BUILTIN_ID
+        from pathlib import Path
 
         config = self._proxy.get(BUILTIN_ID)
-        if config is None or not config.pac_path:
-            return
 
-        self._pac_server = PacServer(config.pac_path)
+        if config is None:
+            log.info("[DEBUG] config is None")
+            return
+        
+        project_dir = Path(__file__).resolve().parent.parent.parent
+        default_pac_path = project_dir / "data" / "pac" / "default.pac"
+        pac_path = config.pac_path or default_pac_path
+
+        self._pac_server = PacServer(pac_path)
         url = self._pac_server.start()
+        log.info("[DEBUG] PAC server url: %s", url)
         if url is None:
             # Không mở được cổng: vẫn dùng được file://, chỉ là trình duyệt sẽ
             # bỏ qua. Nói rõ chứ không im lặng.
-            log.warning(
+            log.debug(
                 "Không chạy được PAC server; giữ %s. Chrome sẽ bỏ qua PAC này.",
                 config.pac_url,
             )
